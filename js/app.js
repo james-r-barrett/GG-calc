@@ -16,7 +16,7 @@ function init() {
      ACCEPT  — acceptor/resistance vectors: {n, s, enz:enzyme, lvl:level acceptor, pos:position at L2, mark:selectable marker}
      LINKERS — end linkers / dummy fragments: {n, s, t:type, pos:positions occupied, lvl:level}
   */
-  
+
   /* ============ Category colours ============ */
   const CAT_COLORS = {
     'Promoter': '#2F7D4F',
@@ -42,11 +42,11 @@ function init() {
   function catColor(cat){ return CAT_COLORS[cat] || '#8A8F98'; }
   function catDot(cat){ return `<span class="cat-dot" style="background:${catColor(cat)}"></span>`; }
   function catPill(cat){ return `<span class="cat-pill">${catDot(cat)}${escapeHtml(cat||'Custom')}</span>`; }
-  
+
   function escapeHtml(str){
     return String(str==null?'':str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
-  
+
   /* ============ DNA maths (mirrors the workbook's "Vol Req - Sequence" method) ============ */
   function baseCounts(seq){
     seq = (seq||'').toUpperCase();
@@ -81,31 +81,60 @@ function init() {
     if (n==null || isNaN(n)) return '&ndash;';
     return n.toFixed(dp==null?2:dp);
   }
-  
+  // Rounds to at most maxDp decimals but drops trailing zeros, so e.g. 1 stays "1"
+  // while 0.25 keeps both decimals -- lets a value's own precision show through
+  // instead of padding everything to a fixed number of decimal places.
+  function fmtSmart(n, maxDp){
+    if (n==null || isNaN(n)) return '&ndash;';
+    maxDp = maxDp==null ? 3 : maxDp;
+    return n.toFixed(maxDp).replace(/(\.\d*?)0+$/,'$1').replace(/\.$/,'');
+  }
+
   /* ============ Combined searchable insert list ============ */
   const INSERTABLE = [];
   PARTS.forEach(p => INSERTABLE.push({ kind:'part', raw:p, cat:(p.t||'').trim() }));
   LINKERS.forEach(l => INSERTABLE.push({ kind:'linker', raw:l, cat:(l.t||'').trim() }));
-  
+
   /* ============ App state ============ */
   let uidCounter = 1;
+  function mkInsert(mode){ return { id:'ins'+(uidCounter++), mode: mode||'custom', part:null, cat:null, conc:'', customName:'', customSeq:'', customLen:'' }; }
+  function mkAcceptor(){ return { mode:'custom', part:null, conc:'', customName:'', customSeq:'', customLen:'' }; }
+  function mkAssembly(){
+    return {
+      id: 'asm'+(uidCounter++),
+      collapsed: false,
+      acceptor: mkAcceptor(),
+      inserts: [ mkInsert() ],
+      checks: {},
+    };
+  }
+  function duplicateAssembly(asm){
+    return {
+      id: 'asm'+(uidCounter++),
+      collapsed: false,
+      acceptor: { ...asm.acceptor },
+      inserts: asm.inserts.map(row => ({ ...row, id: 'ins'+(uidCounter++) })),
+      checks: {},
+    };
+  }
   const state = {
     accFmol: 25,
     insFmol: 50,
     totalVol: 10,
     calcMode: 'sequence', // 'sequence' | 'length'
     mm: {
-      bufferType: 'neb',           // 'neb' | 'homemade'
+      enabled: false,               // shared master mix batching across assemblies (off = each assembly computed independently)
+      bufferType: 'homemade',      // 'neb' | 'homemade'
       bufferVol: null, bufferTouched: false,   // NEB 10x buffer override (default totalVol/10)
       bufferAVol: 1, bufferBVol: 1,            // home-made 2-part buffer, freely editable
       ligaseVol: null, ligaseTouched: false,   // default totalVol/40
       enzymeVol: null, enzymeTouched: false,   // default totalVol/20
     },
-    acceptor: { mode:'library', part:null, conc:'', customName:'', customSeq:'', customLen:'' },
-    inserts: [ mkInsert(), mkInsert() ],
+    mmOverage: 1,       // extra reactions' worth of common master mix, editable
+    mmChecks: {},       // checkbox state for the shared batch rows
+    assemblies: [ mkAssembly() ],
   };
-  function mkInsert(mode){ return { id:'ins'+(uidCounter++), mode: mode||'library', part:null, cat:null, conc:'', customName:'', customSeq:'', customLen:'' }; }
-  
+
   function rowSeq(row){
     if (row.mode==='custom') return cleanSeq(row.customSeq);
     return row.part ? row.part.raw.s : null;
@@ -130,7 +159,7 @@ function init() {
     const seq = rowSeq(row);
     return seq ? seq.length : null;
   }
-  
+
   /* ============ Master mix defaults ============ */
   function mmDefaults(){
     return { buffer: state.totalVol/10, ligase: state.totalVol/40, enzyme: state.totalVol/20 };
@@ -150,13 +179,26 @@ function init() {
     const f = Math.pow(10, dp==null?3:dp);
     return (Math.round(n*f)/f).toString();
   }
-  
+
+  /* ============ Checkbox cell ============ */
+  function checkCell(checksObj, key){
+    return `<input type="checkbox" class="row-check" data-check-key="${escapeHtml(key)}"${checksObj[key]?' checked':''}>`;
+  }
+  function wireCheckCells(container, checksObj, onChange){
+    container.querySelectorAll('[data-check-key]').forEach(cb => {
+      cb.addEventListener('change', e => {
+        checksObj[cb.dataset.checkKey] = e.target.checked;
+        if (onChange) onChange();
+      });
+    });
+  }
+
   /* ============ Rendering: Acceptor + Insert rows ============ */
   function renderPartRow(container, row, opts){
     // opts: {label, items, onRemove}
     const len = displayLen(row);
     const lengthMode = state.calcMode === 'length';
-  
+
     let html = `<div class="part-row-head">
         <span class="part-row-label">${opts.label}</span>
         <div class="row-actions">
@@ -167,7 +209,7 @@ function init() {
           ${opts.onRemove ? `<button type="button" class="remove-btn" data-action="remove" title="Remove">&times;</button>` : ''}
         </div>
       </div>`;
-  
+
     if (row.mode === 'library'){
       const inputVal = row.part ? row.part.raw.n : '';
       html += `<div class="combo-wrap">
@@ -199,9 +241,9 @@ function init() {
         </div>
       </div>`;
     }
-  
+
     container.innerHTML = html;
-  
+
     container.querySelectorAll('[data-mode]').forEach(btn => {
       btn.addEventListener('click', () => {
         if (row.mode !== btn.dataset.mode){ row.mode = btn.dataset.mode; renderAll(); }
@@ -210,14 +252,14 @@ function init() {
     if (opts.onRemove){
       container.querySelector('[data-action="remove"]').addEventListener('click', opts.onRemove);
     }
-  
+
     if (row.mode === 'library'){
       const input = container.querySelector('.combo-input');
       const panel = container.querySelector('.combo-panel');
       wireCombobox(input, panel, opts.items, row, () => renderAll());
-      container.querySelector('.conc-input').addEventListener('input', e => { row.conc = e.target.value; renderResults(); });
+      container.querySelector('.conc-input').addEventListener('input', e => { row.conc = e.target.value; refreshAllResults(); });
     } else {
-      container.querySelector('[data-field="customName"]').addEventListener('input', e => { row.customName = e.target.value; renderResults(); updateAssemblyName(); });
+      container.querySelector('[data-field="customName"]').addEventListener('input', e => { row.customName = e.target.value; renderAssemblyHeaders(); refreshAllResults(); });
       const seqEl = container.querySelector('[data-field="customSeq"]');
       if (seqEl){
         seqEl.addEventListener('input', e => {
@@ -225,25 +267,25 @@ function init() {
           const badge = container.querySelector('.custom-len-badge');
           const seq = cleanSeq(row.customSeq);
           if (badge) badge.textContent = seq.length ? seq.length + ' bp' : '';
-          renderResults();
+          refreshAllResults();
         });
       }
       const lenEl = container.querySelector('[data-field="customLen"]');
       if (lenEl){
-        lenEl.addEventListener('input', e => { row.customLen = e.target.value; renderResults(); });
+        lenEl.addEventListener('input', e => { row.customLen = e.target.value; refreshAllResults(); });
       }
-      container.querySelector('[data-field="conc"]').addEventListener('input', e => { row.conc = e.target.value; renderResults(); });
+      container.querySelector('[data-field="conc"]').addEventListener('input', e => { row.conc = e.target.value; refreshAllResults(); });
     }
   }
-  
+
   // Single delegated listener (set up once, see Init) closes whichever combo panel is open.
   let openCombo = null;
   function closeOpenCombo(){ if (openCombo){ openCombo.panel.hidden = true; openCombo = null; } }
-  
+
   function wireCombobox(input, panel, items, row, onPick){
     let activeIdx = -1;
     let filtered = [];
-  
+
     function renderPanel(){
       const q = input.value.trim().toLowerCase();
       filtered = !q ? items.slice(0, 60) : items.filter(it => it.raw.n.toLowerCase().includes(q)).slice(0, 60);
@@ -269,7 +311,7 @@ function init() {
       panel.hidden = false;
       openCombo = { input, panel };
     }
-  
+
     input.addEventListener('focus', () => { activeIdx=-1; renderPanel(); });
     input.addEventListener('input', () => {
       if (row.part && input.value !== row.part.raw.n) row.part = null;
@@ -284,30 +326,8 @@ function init() {
       else if (e.key === 'Escape'){ panel.hidden = true; openCombo = null; }
     });
   }
-  
-  function renderAcceptorRow(){
-    const container = document.getElementById('acceptor-row');
-    const items = ACCEPT.map(a => ({ kind:'acceptor', raw:a, cat:'Acceptor Vector' }));
-    renderPartRow(container, state.acceptor, { label:'Acceptor', items, onRemove:null });
-  }
-  
-  function renderInsertRows(){
-    const wrap = document.getElementById('insert-rows');
-    wrap.innerHTML = '';
-    state.inserts.forEach((row, i) => {
-      const div = document.createElement('div');
-      div.className = 'part-row';
-      wrap.appendChild(div);
-      renderPartRow(div, row, {
-        label: 'Insert ' + (i+1),
-        items: INSERTABLE,
-        onRemove: () => { state.inserts.splice(i,1); renderAll(); }
-      });
-    });
-    document.getElementById('insert-count').textContent = '(' + state.inserts.length + ')';
-  }
-  
-  /* ============ Results ============ */
+
+  /* ============ Per-assembly computation ============ */
   function buildRow(row, targetFmol, fallbackName){
     const conc = parseFloat(row.conc);
     const hasConc = conc > 0;
@@ -328,98 +348,377 @@ function init() {
       len, vol, hasData, hasConc, complete: hasData && hasConc
     };
   }
-  
-  function computeResults(){
+
+  function computeAssembly(asm){
     const rows = [];
-    const accRow = buildRow(state.acceptor, state.accFmol, 'Acceptor');
+    const accRow = buildRow(asm.acceptor, state.accFmol, 'Acceptor');
     accRow.cat = 'Acceptor Vector';
+    accRow.key = 'acceptor';
     rows.push(accRow);
-    state.inserts.forEach((ins, i) => rows.push(buildRow(ins, state.insFmol, 'Insert ' + (i+1))));
-  
-    const cur = mmCurrent();
-    const bufferType = state.mm.bufferType;
-    const bufferTotal = bufferType === 'neb' ? cur.buffer : (cur.bufferA + cur.bufferB);
-  
-    const incomplete = rows.filter(r => !r.complete);
+    asm.inserts.forEach((ins, i) => {
+      const r = buildRow(ins, state.insFmol, 'Insert ' + (i+1));
+      r.key = 'ins' + ins.id;
+      rows.push(r);
+    });
     const partVolSum = rows.reduce((s,r) => s + (r.vol||0), 0);
-    const water = state.totalVol - (bufferTotal + cur.ligase + cur.enzyme) - partVolSum;
-  
-    return { rows, bufferType, bufferTotal, bufferA: cur.bufferA, bufferB: cur.bufferB, ligase: cur.ligase, enzyme: cur.enzyme, water, incomplete, partVolSum };
+    const complete = rows.every(r => r.complete);
+    return { rows, partVolSum, complete };
   }
-  
-  function renderResults(){
-    const res = computeResults();
-    const tbody = document.getElementById('results-tbody');
-    let html = '';
-  
-    res.rows.forEach(r => {
+
+  function assemblyName(asm){
+    const parts = [];
+    const accName = rowName(asm.acceptor, null);
+    if (accName) parts.push(accName);
+    asm.inserts.forEach(ins => { const n = rowName(ins, null); if (n) parts.push(n); });
+    return parts.join('_');
+  }
+
+  /* ============ Global (batched master mix) computation ============ */
+  function computeGlobal(){
+    const cur = mmCurrent();
+    const bufferTotal = state.mm.bufferType === 'neb' ? cur.buffer : (cur.bufferA + cur.bufferB);
+    const commonPerRxn = bufferTotal + cur.ligase + cur.enzyme;
+
+    const perAssembly = state.assemblies.map(asm => {
+      const res = computeAssembly(asm);
+      const water = res.complete ? (state.totalVol - commonPerRxn - res.partVolSum) : null;
+      return { asm, res, water };
+    });
+
+    const allComplete = perAssembly.every(p => p.res.complete);
+    const N = state.assemblies.length;
+    const overage = parseFloat(state.mmOverage) || 0;
+    const batchFactor = N + overage;
+    const enabled = state.mm.enabled;
+
+    let minWater = null;
+    if (enabled && allComplete && N > 0){
+      minWater = Math.min(...perAssembly.map(p => p.water));
+    }
+
+    perAssembly.forEach(p => {
+      if (enabled && minWater != null){
+        p.aliquot = commonPerRxn + minWater;
+        p.topup = p.water - minWater;
+        p.total = p.aliquot + p.res.partVolSum + p.topup;
+      } else {
+        p.aliquot = null; p.topup = null;
+        p.total = p.water != null ? (commonPerRxn + p.res.partVolSum + p.water) : null;
+      }
+    });
+
+    return {
+      enabled,
+      bufferType: state.mm.bufferType, bufferTotal, bufferA: cur.bufferA, bufferB: cur.bufferB,
+      ligase: cur.ligase, enzyme: cur.enzyme, commonPerRxn,
+      perAssembly, allComplete, N, overage, batchFactor, minWater,
+      bufferBatch: (enabled && minWater!=null) ? bufferTotal*batchFactor : null,
+      bufferABatch: (enabled && minWater!=null) ? cur.bufferA*batchFactor : null,
+      bufferBBatch: (enabled && minWater!=null) ? cur.bufferB*batchFactor : null,
+      ligaseBatch: (enabled && minWater!=null) ? cur.ligase*batchFactor : null,
+      enzymeBatch: (enabled && minWater!=null) ? cur.enzyme*batchFactor : null,
+      waterBatch: (enabled && minWater!=null) ? minWater*batchFactor : null,
+    };
+  }
+
+  /* ============ Rendering: Assemblies ============ */
+  function renderAssemblies(){
+    const wrap = document.getElementById('assembly-list');
+    wrap.innerHTML = '';
+    const glob = computeGlobal();
+
+    state.assemblies.forEach((asm, ai) => {
+      const p = glob.perAssembly[ai];
+      const card = document.createElement('div');
+      card.className = 'assembly-card';
+      wrap.appendChild(card);
+
+      const name = assemblyName(asm) || ('Assembly ' + (ai+1));
+      let head = `<div class="assembly-head">
+        <button type="button" class="assembly-collapse" data-action="collapse" title="${asm.collapsed?'Expand':'Collapse'}">${asm.collapsed?'&#9656;':'&#9662;'}</button>
+        <span class="assembly-name mono">${escapeHtml(name)}</span>
+        <button type="button" class="duplicate-btn" data-action="duplicate" title="Duplicate assembly">&#10697;</button>
+        ${state.assemblies.length>1 ? `<button type="button" class="remove-btn" data-action="remove" title="Remove assembly">&times;</button>` : ''}
+      </div>`;
+      card.innerHTML = head;
+      card.querySelector('[data-action="collapse"]').addEventListener('click', () => {
+        asm.collapsed = !asm.collapsed; renderAssemblies();
+      });
+      card.querySelector('[data-action="duplicate"]').addEventListener('click', () => {
+        state.assemblies.splice(ai+1, 0, duplicateAssembly(asm)); renderAll();
+      });
+      if (state.assemblies.length>1){
+        card.querySelector('[data-action="remove"]').addEventListener('click', () => {
+          state.assemblies.splice(ai,1); renderAll();
+        });
+      }
+
+      if (asm.collapsed) return;
+
+      const body = document.createElement('div');
+      body.className = 'assembly-body';
+      card.appendChild(body);
+
+      const accWrap = document.createElement('div');
+      accWrap.className = 'part-row part-row-acceptor';
+      body.appendChild(accWrap);
+      renderPartRow(accWrap, asm.acceptor, { label:'Acceptor', items: ACCEPT.map(a => ({ kind:'acceptor', raw:a, cat:'Acceptor Vector' })), onRemove:null });
+
+      const insertsHeader = document.createElement('div');
+      insertsHeader.className = 'assembly-subhead';
+      insertsHeader.innerHTML = `<span>Insert fragments <span class="count">(${asm.inserts.length})</span></span>`;
+      body.appendChild(insertsHeader);
+
+      asm.inserts.forEach((row, i) => {
+        const div = document.createElement('div');
+        div.className = 'part-row';
+        body.appendChild(div);
+        renderPartRow(div, row, {
+          label: 'Insert ' + (i+1),
+          items: INSERTABLE,
+          onRemove: () => { asm.inserts.splice(i,1); renderAll(); }
+        });
+      });
+
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button'; addBtn.className = 'btn-add'; addBtn.textContent = '+ Add insert fragment';
+      addBtn.addEventListener('click', () => {
+        const lastMode = asm.inserts.length ? asm.inserts[asm.inserts.length-1].mode : 'custom';
+        asm.inserts.push(mkInsert(lastMode));
+        renderAll();
+      });
+      body.appendChild(addBtn);
+
+      const resultsWrap = document.createElement('div');
+      resultsWrap.className = 'assembly-results';
+      resultsWrap.innerHTML = renderAssemblyResultsHtml(p, glob);
+      body.appendChild(resultsWrap);
+      wireCheckCells(resultsWrap, asm.checks, null);
+    });
+
+    document.getElementById('assembly-count').textContent = '(' + state.assemblies.length + ')';
+  }
+
+  function renderAssemblyHeaders(){
+    // cheap re-render of just the name/heading text without losing focus in open inputs
+    document.querySelectorAll('.assembly-card').forEach((card, ai) => {
+      const asm = state.assemblies[ai];
+      if (!asm) return;
+      const nameEl = card.querySelector('.assembly-name');
+      if (nameEl) nameEl.textContent = assemblyName(asm) || ('Assembly ' + (ai+1));
+    });
+  }
+
+  function renderAssemblyResultsHtml(p, glob){
+    let html = `<table class="results-table">
+      <thead><tr><th>Component</th><th></th><th style="text-align:right;text-transform:none">&micro;L</th><th></th></tr></thead>
+      <tbody>`;
+    p.res.rows.forEach(r => {
       html += `<tr>
         <td class="rname">${escapeHtml(r.name)}${r.len!=null?` <span class="dim mono">${r.len}bp</span>`:''}</td>
         <td>${catDot(r.cat)}</td>
         <td class="num">${r.vol!=null ? fmt(r.vol,2) : (r.hasData ? '<span class="dim">need conc.</span>' : '<span class="dim">&ndash;</span>')}</td>
+        <td class="chk">${checkCell(p.asm.checks, r.key)}</td>
       </tr>`;
     });
-  
-    html += `<tr class="divider"><td colspan="3"></td></tr>`;
-    if (res.bufferType === 'neb'){
-      html += `<tr><td>T4 ligase buffer (10&times;)</td><td></td><td class="num">${fmt(res.bufferTotal,2)}</td></tr>`;
+    html += `<tr class="divider"><td colspan="4"></td></tr>`;
+
+    if (glob.enabled){
+      html += `<tr><td>Master mix aliquot</td><td></td><td class="num">${p.aliquot!=null ? fmt(p.aliquot,2) : '<span class="dim">&ndash;</span>'}</td><td class="chk">${checkCell(p.asm.checks,'aliquot')}</td></tr>`;
+      const topupOk = p.topup!=null;
+      html += `<tr><td>Top-up water</td><td></td><td class="num ${topupOk && p.topup<0 ? 'neg':''}">${topupOk ? fmt(p.topup,2) : '<span class="dim">&ndash;</span>'}</td><td class="chk">${checkCell(p.asm.checks,'topup')}</td></tr>`;
     } else {
-      html += `<tr><td>Buffer &ndash; Part A</td><td></td><td class="num">${fmt(res.bufferA,2)}</td></tr>`;
-      html += `<tr><td>Buffer &ndash; Part B</td><td></td><td class="num">${fmt(res.bufferB,2)}</td></tr>`;
+      if (glob.bufferType === 'neb'){
+        html += `<tr><td>T4 ligase buffer (10&times;)</td><td></td><td class="num">${fmt(glob.bufferTotal,2)}</td><td class="chk">${checkCell(p.asm.checks,'buffer')}</td></tr>`;
+      } else {
+        html += `<tr><td>Buffer &ndash; Part A</td><td></td><td class="num">${fmt(glob.bufferA,2)}</td><td class="chk">${checkCell(p.asm.checks,'bufferA')}</td></tr>`;
+        html += `<tr><td>Buffer &ndash; Part B</td><td></td><td class="num">${fmt(glob.bufferB,2)}</td><td class="chk">${checkCell(p.asm.checks,'bufferB')}</td></tr>`;
+      }
+      html += `<tr><td>T4 DNA ligase</td><td></td><td class="num">${fmt(glob.ligase,2)}</td><td class="chk">${checkCell(p.asm.checks,'ligase')}</td></tr>`;
+      html += `<tr><td>Restriction enzyme</td><td></td><td class="num">${fmt(glob.enzyme,2)}</td><td class="chk">${checkCell(p.asm.checks,'enzyme')}</td></tr>`;
+      const waterOk = p.water!=null;
+      html += `<tr><td>Water</td><td></td><td class="num ${waterOk && p.water<0 ? 'neg':''}">${waterOk ? fmt(p.water,2) : '<span class="dim">&ndash;</span>'}</td><td class="chk">${checkCell(p.asm.checks,'water')}</td></tr>`;
     }
-    html += `<tr><td>T4 DNA ligase</td><td></td><td class="num">${fmt(res.ligase,2)}</td></tr>`;
-    html += `<tr><td>Restriction enzyme</td><td></td><td class="num">${fmt(res.enzyme,2)}</td></tr>`;
-  
-    const waterOk = res.incomplete.length === 0;
-    html += `<tr><td>Water</td><td></td><td class="num ${waterOk && res.water<0 ? 'neg':''}">${waterOk ? fmt(res.water,2) : '<span class="dim">&ndash;</span>'}</td></tr>`;
-    html += `<tr class="total"><td>Total</td><td></td><td class="num">${fmt(state.totalVol,2)}</td></tr>`;
-  
-    tbody.innerHTML = html;
-  
+    html += `<tr class="total"><td>Total</td><td></td><td class="num">${p.total!=null ? fmt(p.total,2) : fmt(state.totalVol,2)}</td><td></td></tr>`;
+    html += `</tbody></table>`;
+    if (!p.res.complete){
+      html += `<p class="note">Enter${state.calcMode==='length'?' a length (bp) and':''} a stock concentration for every selected fragment to calculate water volume.</p>`;
+    }
+    return html;
+  }
+
+  /* ============ Master mix batch box (aside, top) ============ */
+  function batchRow(label, batchVal, key, batchFactor, perRxnVal){
+    const ok = batchVal!=null;
+    const calc = ok ? `<span class="mm-calc-hint mono">${fmtSmart(batchFactor)}&thinsp;&times;&thinsp;${fmtSmart(perRxnVal)}&thinsp;=</span>` : '';
+    return `<tr><td>${label}</td><td></td><td class="num ${ok && batchVal<0 ? 'neg':''}">${ok ? calc+fmtSmart(batchVal) : '<span class="dim">&ndash;</span>'}</td><td class="chk">${checkCell(state.mmChecks,key)}</td></tr>`;
+  }
+
+  // Builds the skeleton (overage field + results table) once when master mix is switched on;
+  // left in place afterwards so typing in the overage field doesn't need to rebuild it.
+  function renderMasterMixBatch(){
+    const box = document.getElementById('mastermix-batch');
+    if (!state.mm.enabled){
+      box.innerHTML = '';
+      renderCyclingCaption();
+      return;
+    }
+    box.innerHTML = `
+      <label class="mm-field">
+        <span>Extra reactions <span class="unit">overage</span></span>
+        <div class="mm-field-input">
+          <input type="text" inputmode="decimal" id="in-mmOverage" value="${roundStr(state.mmOverage,3)}">
+        </div>
+      </label>
+      <p class="note" id="mm-batch-caption"></p>
+      <table class="results-table" id="results-table">
+        <thead><tr><th>Component</th><th></th><th style="text-align:right;text-transform:none">&micro;L</th><th></th></tr></thead>
+        <tbody id="results-tbody"></tbody>
+      </table>
+      <p id="warning-msg" class="warning" hidden></p>
+      <p id="note-msg" class="note" hidden></p>`;
+    document.getElementById('in-mmOverage').addEventListener('input', e => {
+      state.mmOverage = parseFloat(e.target.value)||0;
+      renderBatchResults();
+    });
+    renderBatchResults();
+  }
+
+  // Numbers-only update of the batch results table; assumes renderMasterMixBatch() has already
+  // built the skeleton. Safe to call on every keystroke elsewhere without losing input focus.
+  function renderBatchResults(){
+    if (!state.mm.enabled) return;
+    const glob = computeGlobal();
+    const tbody = document.getElementById('results-tbody');
+    if (!tbody) return;
+    const captionEl = document.getElementById('mm-batch-caption');
     const warnEl = document.getElementById('warning-msg');
     const noteEl = document.getElementById('note-msg');
-    if (waterOk && res.water < 0){
+    const bf = glob.batchFactor;
+
+    captionEl.textContent = `Batch for ${glob.N} assembl${glob.N===1?'y':'ies'} + ${fmtSmart(glob.overage)} overage = ${fmtSmart(bf)}× reactions.`;
+
+    let html = '';
+    if (glob.bufferType === 'neb'){
+      html += batchRow('T4 ligase buffer (10&times;)', glob.bufferBatch, 'buffer', bf, glob.bufferTotal);
+    } else {
+      html += batchRow('Buffer &ndash; Part A', glob.bufferABatch, 'bufferA', bf, glob.bufferA);
+      html += batchRow('Buffer &ndash; Part B', glob.bufferBBatch, 'bufferB', bf, glob.bufferB);
+    }
+    html += batchRow('T4 DNA ligase', glob.ligaseBatch, 'ligase', bf, glob.ligase);
+    html += batchRow('Restriction enzyme', glob.enzymeBatch, 'enzyme', bf, glob.enzyme);
+    const waterOk = glob.waterBatch!=null;
+    html += batchRow('Water (shared minimum)', glob.waterBatch, 'water', bf, glob.minWater);
+    html += `<tr class="total"><td>Aliquot per reaction</td><td></td><td class="num">${waterOk ? fmtSmart(glob.commonPerRxn+glob.minWater) : '<span class="dim">&ndash;</span>'}</td><td></td></tr>`;
+
+    tbody.innerHTML = html;
+    wireCheckCells(tbody, state.mmChecks, null);
+
+    const anyNegative = waterOk && (glob.waterBatch < 0 || glob.perAssembly.some(p => p.topup!=null && p.topup<0));
+    if (anyNegative){
       warnEl.hidden = false;
-      warnEl.textContent = `Parts and master mix exceed the reaction volume by ${fmt(Math.abs(res.water),2)} \u00b5L. Increase the reaction volume, or use more concentrated stocks.`;
+      warnEl.textContent = `Parts and master mix exceed the reaction volume for at least one assembly. Increase the reaction volume, or use more concentrated stocks.`;
     } else {
       warnEl.hidden = true;
     }
-    if (!waterOk){
+    if (!glob.allComplete){
       noteEl.hidden = false;
       noteEl.textContent = state.calcMode === 'length'
-        ? `Enter a length (bp) and stock concentration for every selected fragment to calculate water volume.`
-        : `Enter a stock concentration for every selected fragment to calculate water volume.`;
+        ? `Enter a length (bp) and stock concentration for every fragment in every assembly to calculate the shared master mix.`
+        : `Enter a stock concentration for every fragment in every assembly to calculate the shared master mix.`;
     } else {
       noteEl.hidden = true;
     }
-  
+
     renderCyclingCaption();
   }
-  
+
   function renderCyclingCaption(){
     const el = document.getElementById('enzyme-caption');
     if (!el) return;
-    const enz = (state.acceptor.mode === 'library' && state.acceptor.part) ? state.acceptor.part.raw.enz : null;
+    const first = state.assemblies[0];
+    const enz = (first && first.acceptor.mode === 'library' && first.acceptor.part) ? first.acceptor.part.raw.enz : null;
     el.hidden = !enz;
     if (enz) el.textContent = `Selected acceptor uses ${enz}.`;
   }
-  
-  function updateAssemblyName(){
-    const parts = [];
-    const accName = rowName(state.acceptor, null);
-    if (accName) parts.push(accName);
-    state.inserts.forEach(ins => { const n = rowName(ins, null); if (n) parts.push(n); });
-    document.getElementById('assembly-name').value = parts.join('_');
-  }
-  
+
   function renderAll(){
-    renderAcceptorRow();
-    renderInsertRows();
-    renderResults();
-    updateAssemblyName();
+    renderAssemblies();
+    renderMasterMixBatch();
   }
-  
-  /* ============ Master mix rendering ============ */
+
+  // Targeted refresh for value-only changes (typing conc/name/length, master mix volumes, fmol/volume
+  // targets): updates every assembly's results table + the batch box, without rebuilding the row
+  // inputs themselves (which would drop keyboard focus mid-keystroke).
+  function refreshAllResults(){
+    const glob = computeGlobal();
+    document.querySelectorAll('#assembly-list > .assembly-card').forEach((card, ai) => {
+      const asm = state.assemblies[ai];
+      if (!asm || asm.collapsed) return;
+      const p = glob.perAssembly[ai];
+      const resultsWrap = card.querySelector('.assembly-results');
+      if (resultsWrap){
+        resultsWrap.innerHTML = renderAssemblyResultsHtml(p, glob);
+        wireCheckCells(resultsWrap, asm.checks, null);
+      }
+    });
+    if (state.mm.enabled) renderBatchResults();
+    else renderCyclingCaption();
+  }
+
+  /* ============ CSV export ============ */
+  function csvEscape(v){
+    const s = String(v==null?'':v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+  }
+  function downloadCsv(){
+    const glob = computeGlobal();
+    const rows = [['Assembly','Component','Category','Volume (µL)']];
+
+    glob.perAssembly.forEach(p => {
+      const name = assemblyName(p.asm) || 'Assembly';
+      p.res.rows.forEach(r => rows.push([name, r.name, r.cat, r.vol!=null?r.vol.toFixed(2):'']));
+      if (glob.enabled){
+        rows.push([name, 'Master mix aliquot', '', p.aliquot!=null?p.aliquot.toFixed(2):'']);
+        rows.push([name, 'Top-up water', '', p.topup!=null?p.topup.toFixed(2):'']);
+      } else {
+        if (glob.bufferType === 'neb'){
+          rows.push([name, 'T4 ligase buffer (10x)', '', glob.bufferTotal.toFixed(2)]);
+        } else {
+          rows.push([name, 'Buffer - Part A', '', glob.bufferA.toFixed(2)]);
+          rows.push([name, 'Buffer - Part B', '', glob.bufferB.toFixed(2)]);
+        }
+        rows.push([name, 'T4 DNA ligase', '', glob.ligase.toFixed(2)]);
+        rows.push([name, 'Restriction enzyme', '', glob.enzyme.toFixed(2)]);
+        rows.push([name, 'Water', '', p.water!=null?p.water.toFixed(2):'']);
+      }
+      rows.push([name, 'Total', '', p.total!=null?p.total.toFixed(2):'']);
+    });
+
+    if (glob.enabled){
+      const batchName = 'Master mix (batch)';
+      if (glob.bufferType === 'neb'){
+        rows.push([batchName, 'T4 ligase buffer (10x)', '', glob.bufferBatch!=null?glob.bufferBatch.toFixed(2):'']);
+      } else {
+        rows.push([batchName, 'Buffer - Part A', '', glob.bufferABatch!=null?glob.bufferABatch.toFixed(2):'']);
+        rows.push([batchName, 'Buffer - Part B', '', glob.bufferBBatch!=null?glob.bufferBBatch.toFixed(2):'']);
+      }
+      rows.push([batchName, 'T4 DNA ligase', '', glob.ligaseBatch!=null?glob.ligaseBatch.toFixed(2):'']);
+      rows.push([batchName, 'Restriction enzyme', '', glob.enzymeBatch!=null?glob.enzymeBatch.toFixed(2):'']);
+      rows.push([batchName, 'Water (shared minimum)', '', glob.waterBatch!=null?glob.waterBatch.toFixed(2):'']);
+    }
+
+    const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
+    const blob = new Blob([csv], { type:'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'pipetting-volumes.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  document.getElementById('download-csv-btn').addEventListener('click', downloadCsv);
+
+  /* ============ Master mix settings (Global conditions) ============ */
   function mmFieldRow(key, label, value, showReset, defaultHint){
     return `<label class="mm-field">
       <span>${label} <span class="unit">&micro;L</span></span>
@@ -436,14 +735,17 @@ function init() {
       input.addEventListener('input', e => {
         onInput(parseFloat(e.target.value)||0);
         if (resetBtn) resetBtn.hidden = false;
-        renderResults();
+        refreshAllResults();
       });
     }
     if (resetBtn && onReset){
-      resetBtn.addEventListener('click', () => { onReset(); renderMasterMix(); renderResults(); });
+      resetBtn.addEventListener('click', () => { onReset(); renderMasterMixSettings(); refreshAllResults(); });
     }
   }
-  function renderMasterMix(){
+  // These settings (buffer type, per-reaction buffer/ligase/enzyme volumes) are always shown and
+  // always in effect — they drive each assembly's own independent calculation, and, when the
+  // shared master mix toggle is on, the batch numbers in the Master mix box too.
+  function renderMasterMixSettings(){
     const c = document.getElementById('mastermix-fields');
     const cur = mmCurrent();
     let html = `<div class="radio-row">
@@ -459,9 +761,9 @@ function init() {
     html += mmFieldRow('ligase', 'T4 DNA ligase', cur.ligase, state.mm.ligaseTouched, 'vol&divide;40');
     html += mmFieldRow('enzyme', 'Restriction enzyme', cur.enzyme, state.mm.enzymeTouched, 'vol&divide;20');
     c.innerHTML = html;
-  
+
     c.querySelectorAll('input[name="bufferType"]').forEach(r => r.addEventListener('change', e => {
-      state.mm.bufferType = e.target.value; renderMasterMix(); renderResults();
+      state.mm.bufferType = e.target.value; renderMasterMixSettings(); refreshAllResults();
     }));
     wireMmField(c, 'buffer', v => { state.mm.bufferVol = v; state.mm.bufferTouched = true; }, () => { state.mm.bufferTouched = false; });
     wireMmField(c, 'bufferA', v => { state.mm.bufferAVol = v; });
@@ -469,24 +771,27 @@ function init() {
     wireMmField(c, 'ligase', v => { state.mm.ligaseVol = v; state.mm.ligaseTouched = true; }, () => { state.mm.ligaseTouched = false; });
     wireMmField(c, 'enzyme', v => { state.mm.enzymeVol = v; state.mm.enzymeTouched = true; }, () => { state.mm.enzymeTouched = false; });
   }
-  
+
   /* ============ Setup field wiring ============ */
-  document.getElementById('in-accFmol').addEventListener('input', e => { state.accFmol = parseFloat(e.target.value)||0; renderResults(); });
-  document.getElementById('in-insFmol').addEventListener('input', e => { state.insFmol = parseFloat(e.target.value)||0; renderResults(); });
+  document.getElementById('in-accFmol').addEventListener('input', e => { state.accFmol = parseFloat(e.target.value)||0; refreshAllResults(); });
+  document.getElementById('in-insFmol').addEventListener('input', e => { state.insFmol = parseFloat(e.target.value)||0; refreshAllResults(); });
   document.getElementById('in-totalVol').addEventListener('input', e => {
     state.totalVol = parseFloat(e.target.value)||0;
-    renderMasterMix();
-    renderResults();
+    renderMasterMixSettings();
+    refreshAllResults();
+  });
+  document.getElementById('in-mmEnabled').addEventListener('change', e => {
+    state.mm.enabled = e.target.checked;
+    renderAll();
   });
   document.querySelectorAll('input[name="calcMode"]').forEach(r => {
     r.addEventListener('change', e => { state.calcMode = e.target.value; renderAll(); });
   });
-  document.getElementById('add-insert-btn').addEventListener('click', () => {
-    const lastMode = state.inserts.length ? state.inserts[state.inserts.length-1].mode : 'library';
-    state.inserts.push(mkInsert(lastMode));
+  document.getElementById('add-assembly-btn').addEventListener('click', () => {
+    state.assemblies.push(mkAssembly());
     renderAll();
   });
-  
+
   /* ============ Tabs ============ */
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -497,25 +802,25 @@ function init() {
       if (btn.dataset.tab === 'db') renderDbTable();
     });
   });
-  
+
   /* ============ Part Library tab ============ */
   const ALL_DB = [];
   ACCEPT.forEach(a => ALL_DB.push({
     kind:'acceptor', raw:a, name:a.n, cat:'Acceptor Vector', len:a.s.length,
-    details: [a.enz, a.lvl!=null&&a.lvl!=='' ? 'Level '+a.lvl : null, a.pos&&a.pos!=='-' ? 'Position '+a.pos : null, a.mark].filter(Boolean).join(' \u00b7 ')
+    details: [a.enz, a.lvl!=null&&a.lvl!=='' ? 'Level '+a.lvl : null, a.pos&&a.pos!=='-' ? 'Position '+a.pos : null, a.mark].filter(Boolean).join(' · ')
   }));
   PARTS.forEach(p => ALL_DB.push({
     kind:'part', raw:p, name:p.n, cat:(p.t||'').trim(), len:p.s.length,
-    details: `5\u2032 ${p.s5||''}  \u00b7  3\u2032 ${p.s3||''}`
+    details: `5′ ${p.s5||''}  ·  3′ ${p.s3||''}`
   }));
   LINKERS.forEach(l => ALL_DB.push({
     kind:'linker', raw:l, name:l.n, cat:(l.t||'').trim(), len:l.s.length,
-    details: [l.pos?('Positions '+l.pos):null, l.lvl!=null?('Level '+l.lvl):null].filter(Boolean).join(' \u00b7 ')
+    details: [l.pos?('Positions '+l.pos):null, l.lvl!=null?('Level '+l.lvl):null].filter(Boolean).join(' · ')
   }));
-  
+
   const DB_CATS = Array.from(new Set(ALL_DB.map(d => d.cat))).sort();
   let dbActiveFilter = 'All';
-  
+
   function renderDbFilters(){
     const wrap = document.getElementById('db-filters');
     const cats = ['All', ...DB_CATS];
@@ -524,7 +829,7 @@ function init() {
       chip.addEventListener('click', () => { dbActiveFilter = chip.dataset.cat; renderDbTable(); });
     });
   }
-  
+
   function renderDbTable(){
     const q = document.getElementById('db-search').value.trim().toLowerCase();
     const rows = ALL_DB.filter(d => (dbActiveFilter==='All' || d.cat===dbActiveFilter) && (!q || d.name.toLowerCase().includes(q)));
@@ -540,34 +845,37 @@ function init() {
           <button type="button" class="icon-btn" data-use="${i}">Use&nbsp;&rarr;</button>
         </td>
       </tr>`).join('');
-  
+
     tbody.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', () => {
       const d = rows[+b.dataset.copy];
       navigator.clipboard.writeText(d.raw.s).then(() => { b.textContent='Copied'; setTimeout(()=>b.textContent='Copy seq',1200); });
     }));
     tbody.querySelectorAll('[data-use]').forEach(b => b.addEventListener('click', () => {
       const d = rows[+b.dataset.use];
+      if (!state.assemblies.length) state.assemblies.push(mkAssembly());
+      const asm = state.assemblies[state.assemblies.length-1];
       if (d.kind === 'acceptor'){
-        state.acceptor = { mode:'library', part:{kind:'acceptor', raw:d.raw, cat:'Acceptor Vector'}, conc:'', customName:'', customSeq:'', customLen:'' };
+        asm.acceptor = { mode:'library', part:{kind:'acceptor', raw:d.raw, cat:'Acceptor Vector'}, conc:'', customName:'', customSeq:'', customLen:'' };
       } else {
         const ins = mkInsert();
         ins.part = { kind:d.kind, raw:d.raw, cat:d.cat };
-        state.inserts.push(ins);
+        asm.inserts.push(ins);
       }
+      asm.collapsed = false;
       renderAll();
       document.querySelector('.tab-btn[data-tab="calc"]').click();
     }));
-  
+
     document.getElementById('db-count').textContent = `${rows.length} of ${ALL_DB.length} parts`;
   }
   document.getElementById('db-search').addEventListener('input', renderDbTable);
-  
+
   /* ============ Init ============ */
   document.addEventListener('click', (e) => {
     if (openCombo && !openCombo.panel.contains(e.target) && e.target !== openCombo.input) closeOpenCombo();
   });
   renderDbFilters();
-  renderMasterMix();
+  renderMasterMixSettings();
   renderAll();
 }
 

@@ -106,6 +106,7 @@
     position:relative;
   }
   .part-row:last-child{ margin-bottom:0; }
+  .part-row-acceptor{ background:var(--accent-bg); border-color:var(--accent); }
   .part-row-head{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; }
   .part-row-label{ font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.06em; }
   .row-actions{ display:flex; gap:10px; align-items:center; }
@@ -117,6 +118,11 @@
     background:none; border:none; color:var(--ink-faint); cursor:pointer; font-size:16px; line-height:1; padding:2px 4px;
   }
   .remove-btn:hover{ color:var(--warn); }
+  .duplicate-btn{
+    background:none; border:none; color:var(--ink-faint); cursor:pointer; font-size:14px; line-height:1; padding:2px 4px;
+    flex:0 0 auto;
+  }
+  .duplicate-btn:hover{ color:var(--accent-ink); }
 
   .combo-wrap{ position:relative; }
   .combo-input-row{ display:flex; gap:8px; }
@@ -157,9 +163,46 @@
 
   .assembly-name-input{ font-family:var(--font-mono); font-size:13px; color:var(--ink-soft); background:#F2F0E8; }
 
+  /* ---------- Assembly cards ---------- */
+  .assembly-card{
+    border:1px solid var(--line-strong); border-radius:9px; background:#FAF9F4; margin-bottom:14px; overflow:hidden;
+  }
+  .assembly-card:last-child{ margin-bottom:0; }
+  .assembly-head{
+    display:flex; align-items:center; gap:10px; padding:12px 14px; background:#F2F0E8;
+    border-bottom:1px solid var(--line);
+  }
+  .assembly-collapse{
+    background:none; border:none; cursor:pointer; color:var(--ink-soft); font-size:12px; padding:2px 4px; line-height:1;
+    flex:0 0 auto;
+  }
+  .assembly-name{ flex:1 1 auto; font-size:13px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .assembly-body{ padding:14px; }
+  .assembly-body .part-row{ margin-bottom:10px; }
+  .assembly-subhead{
+    display:flex; align-items:center; justify-content:space-between; font-family:var(--font-mono); font-size:11px;
+    color:var(--ink-faint); text-transform:uppercase; letter-spacing:.06em; margin:14px 0 8px;
+  }
+  .assembly-subhead .count{ font-weight:400; text-transform:none; letter-spacing:0; }
+  .assembly-results{ margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
+  .assembly-results .results-table{ margin-bottom:0; }
+
+  /* ---------- Checkbox cells ---------- */
+  .results-table td.chk{ width:24px; text-align:center; padding-left:8px; }
+  .results-table th:last-child{ width:24px; }
+  .row-check{ width:15px; height:15px; accent-color:var(--accent); cursor:pointer; }
+
+  #mm-batch-caption{ margin-top:8px; margin-bottom:10px; }
+  #download-csv-btn{ margin-top:12px; }
+
+  .mm-toggle-row{ margin-bottom:14px; }
+  .mm-calc-hint{ font-size:10px; color:var(--ink-faint); white-space:nowrap; margin-right:8px; display:inline-block; }
+  .mm-settings-row{ margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+  .mm-settings-row .field-label{ margin-bottom:10px; }
+
   /* ---------- Header logo ---------- */
   .title-row{ display:flex; align-items:center; gap:14px; }
-  .site-logo{ height:44px; width:auto; display:block; flex:0 0 auto; }
+  .site-logo{ height:56px; width:auto; display:block; flex:0 0 auto; }
 
   /* ---------- Segmented mode toggle ---------- */
   .mode-toggle{ display:inline-flex; border:1px solid var(--line-strong); border-radius:7px; overflow:hidden; }
