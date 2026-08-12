@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Golden Gate Assembly Calculator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <div class="titles">
+      <div class="title-row">
+        <img src="/images/icon.svg" alt="" class="site-logo" onerror="this.style.display='none'">
+        <div>
+          <p class="eyebrow">Golden Gate / MoClo</p>
+          <h1>Assembly Volume Calculator</h1>
+        </div>
+      </div>
+      <p class="dek">Pick an acceptor vector and insert fragments, enter stock concentrations, and get pipetting volumes for the digestion&ndash;ligation reaction.</p>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab-btn active" data-tab="calc" role="tab" aria-selected="true">Calculator</button>
+      <button class="tab-btn" data-tab="db" role="tab" aria-selected="false">Part Library</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="tab-calc" class="tab-panel">
+      <div class="calc-grid">
+        <div class="calc-main">
+
+          <div class="card">
+            <h2>Reaction setup</h2>
+            <div class="setup-fields">
+              <label>Acceptor target <span class="unit">FMOL</span>
+                <input type="number" id="in-accFmol" value="25" min="0" step="any">
+              </label>
+              <label>Insert target (each) <span class="unit">FMOL</span>
+                <input type="number" id="in-insFmol" value="50" min="0" step="any">
+              </label>
+              <label>Reaction volume <span class="unit">&micro;L</span>
+                <input type="number" id="in-totalVol" value="10" min="0" step="any">
+              </label>
+            </div>
+            <div class="calc-mode-row">
+              <span class="field-label">Volume calculation</span>
+              <div class="radio-row">
+                <label class="radio-option"><input type="radio" name="calcMode" value="sequence" checked> Sequence composition <span class="unit">(exact)</span></label>
+                <label class="radio-option"><input type="radio" name="calcMode" value="length"> Length only <span class="unit">(bp average &mdash; less accurate)</span></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Master mix</h2>
+            <div id="mastermix-fields"></div>
+          </div>
+
+          <div class="card">
+            <h2>Acceptor vector</h2>
+            <div id="acceptor-row"></div>
+          </div>
+
+          <div class="card">
+            <h2>Insert fragments <span class="count" id="insert-count"></span></h2>
+            <div id="insert-rows"></div>
+            <button id="add-insert-btn" class="btn-add" type="button">+ Add insert fragment</button>
+          </div>
+
+          <div class="card">
+            <h2>Assembly name</h2>
+            <input type="text" id="assembly-name" class="assembly-name-input mono" readonly>
+          </div>
+
+        </div>
+
+        <aside class="calc-side">
+          <div class="card">
+            <h2>Pipetting volumes</h2>
+            <table class="results-table">
+              <thead><tr><th>Component</th><th></th><th style="text-align:right">&micro;L</th></tr></thead>
+              <tbody id="results-tbody"></tbody>
+            </table>
+            <p id="warning-msg" class="warning" hidden></p>
+            <p id="note-msg" class="note" hidden></p>
+          </div>
+
+          <div class="card">
+            <h2>Recommended cycling</h2>
+            <p id="enzyme-caption" class="note" hidden></p>
+            <table class="cycling-table">
+              <thead><tr><th>Step</th><th>Temp</th><th>Time</th><th>Cycles</th></tr></thead>
+              <tbody>
+                <tr><td>Digestion</td><td>37&deg;C</td><td>5 min</td><td rowspan="2">&times;35</td></tr>
+                <tr><td>Ligation</td><td>16&deg;C</td><td>5 min</td></tr>
+                <tr><td>Final digestion</td><td>37&deg;C</td><td>10 min</td><td>&times;1</td></tr>
+                <tr><td>Heat inactivation</td><td>65 / 80&deg;C</td><td>20 min</td><td>&times;1</td></tr>
+              </tbody>
+            </table>
+            <p class="note">These temperatures assume a 37&thinsp;&deg;C/16&thinsp;&deg;C-optimal enzyme (BsaI, BpiI). Other Type IIS enzymes have different optima &mdash; for example BsmBI/Esp3I digests best around 42&thinsp;&deg;C &mdash; so check yours and adjust the digestion step accordingly.</p>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="tab-db" class="tab-panel" hidden>
+      <div class="db-controls">
+        <input type="search" id="db-search" placeholder="Search parts by name&hellip;">
+        <div class="db-filters" id="db-filters"></div>
+      </div>
+      <div class="db-table-wrap">
+        <div class="db-table-scroll">
+          <table class="db-table">
+            <thead><tr><th>Name</th><th>Category</th><th>Length</th><th>Details</th><th></th></tr></thead>
+            <tbody id="db-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <p class="db-count" id="db-count"></p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>Volumes default to using actual base composition (A/C/G/T molecular weights); switch to length-only mode above to use the average bp weight instead. Master-mix volumes default to 1/10 (buffer), 1/40 (ligase) and 1/20 (restriction enzyme) of the reaction volume but can be edited &mdash; water makes up the remainder. Nothing you enter here leaves your browser.</p>
+  </footer>
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
