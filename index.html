@@ -87,6 +87,7 @@
             <h2>Recommended cycling</h2>
             <p id="enzyme-caption" class="note" hidden></p>
             <div id="cycling-table-wrap"></div>
+            <div class="cycling-total-box" id="cycling-total"></div>
             <div class="cycling-settings">
               <label class="mm-field-inline">Ramp rate <span class="unit">&deg;C/sec</span>
                 <input type="text" inputmode="decimal" id="in-rampRate" value="3">
@@ -95,8 +96,8 @@
                 <input type="text" inputmode="decimal" id="in-heatup" value="5">
               </label>
             </div>
-            <p class="note" id="cycling-total"></p>
-            <p class="note">Times and cycle counts are editable above. These temperatures assume a 37&thinsp;&deg;C/16&thinsp;&deg;C-optimal enzyme (BsaI, BpiI). Other Type IIS enzymes have different optima &mdash; for example BsmBI/Esp3I digests best around 42&thinsp;&deg;C, with 80&thinsp;&deg;C heat inactivation &mdash; so check yours and adjust the steps accordingly.</p>
+            <p class="note">Temperatures follow the selected enzyme's recommended settings; times and cycle counts are editable.</p>
+            <p class="note cycling-tip">Efficiency (colony yield) keeps climbing through 60 cycles, but assembly accuracy plateaus around 90&ndash;93% by roughly 30 cycles &mdash; cycles beyond that mainly buy more colonies, not more correct ones. Many protocols use 20&ndash;30 cycles as the time/quality tradeoff.</p>
           </div>
         </aside>
       </div>

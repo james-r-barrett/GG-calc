@@ -135,9 +135,34 @@ function init() {
     assemblies: [ mkAssembly() ],
     cycling: defaultCycling(),  // rampRate (deg C/sec, rough estimate) + heatupMin + editable step/cycle blocks
   };
+  // Recommended digestion / heat-inactivation temperatures per Type IIS enzyme (rough, manufacturer defaults).
+  // Ligation always runs at 16°C (T4 ligase) regardless of the restriction enzyme, so it isn't listed here.
+  const CYCLING_ENZYMES = [
+    { key:'bsai',   label:'BsaI / BsaI-HFv2',      digest:37, heatInact:65 },
+    { key:'bbsi',   label:'BbsI-HF (BpiI)',        digest:37, heatInact:65 },
+    { key:'bspqi',  label:'BspQI (SapI)',          digest:37, heatInact:65 },
+    { key:'bsmbi',  label:'BsmBI-v2 (Esp3I)',      digest:42, heatInact:80 },
+    { key:'custom', label:'Custom / other',        digest:null, heatInact:null },
+  ];
+  function enzymeKeyFromName(name){
+    const n = (name||'').toLowerCase();
+    if (n.includes('bsai')) return 'bsai';
+    if (n.includes('bbsi') || n.includes('bpii')) return 'bbsi';
+    if (n.includes('bspqi') || n.includes('sapi')) return 'bspqi';
+    if (n.includes('bsmbi') || n.includes('esp3i')) return 'bsmbi';
+    return null;
+  }
+  function applyCyclingEnzyme(key){
+    const e = CYCLING_ENZYMES.find(x => x.key === key);
+    if (!e || e.digest == null) return;
+    state.cycling.blocks[0].steps[0].temp = e.digest;      // Digestion
+    state.cycling.blocks[1].steps[0].temp = e.digest;      // Final digestion
+    state.cycling.blocks[2].steps[0].temp = e.heatInact;   // Heat inactivation
+  }
   function defaultCycling(){
     return {
       rampRate: 3, heatupMin: 5,
+      enzyme: 'bsai', enzymeTouched: false,   // enzymeTouched: user picked manually, stop auto-syncing to the selected acceptor
       blocks: [
         { cycles: 35, steps: [ { name:'Digestion', temp:37, time:5 }, { name:'Ligation', temp:16, time:5 } ] },
         { cycles: 1,  steps: [ { name:'Final digestion', temp:37, time:10 } ] },
@@ -664,6 +689,15 @@ function init() {
     const enz = (first && first.acceptor.mode === 'library' && first.acceptor.part) ? first.acceptor.part.raw.enz : null;
     el.hidden = !enz;
     if (enz) el.textContent = `Selected acceptor uses ${enz}.`;
+
+    if (enz && !state.cycling.enzymeTouched){
+      const key = enzymeKeyFromName(enz);
+      if (key && key !== state.cycling.enzyme){
+        state.cycling.enzyme = key;
+        applyCyclingEnzyme(key);
+        renderCyclingTable();
+      }
+    }
   }
 
   /* ============ Cycling table (editable steps/cycles + rough estimated run time) ============ */
@@ -696,29 +730,41 @@ function init() {
   function updateCyclingTotal(){
     const el = document.getElementById('cycling-total');
     if (!el) return;
-    el.innerHTML = `Estimated total run time: ~${fmtDuration(cyclingTotalMinutes())} &mdash; assumes a ${fmtSmart(state.cycling.rampRate)}&deg;C/sec block ramp rate plus ${fmtSmart(state.cycling.heatupMin)} min initial heat-up. Rough estimate only; actual cyclers vary.`;
+    el.innerHTML = `<span class="cycling-total-label">Estimated total run time</span>
+      <span class="cycling-total-value">~${fmtDuration(cyclingTotalMinutes())}</span>
+      <span class="cycling-total-sub">assumes a ${fmtSmart(state.cycling.rampRate)}&deg;C/sec block ramp rate plus ${fmtSmart(state.cycling.heatupMin)} min initial heat-up. Rough estimate only; actual cyclers vary.</span>`;
   }
   function renderCyclingTable(){
     const wrap = document.getElementById('cycling-table-wrap');
     if (!wrap) return;
-    let html = `<table class="cycling-table"><thead><tr><th>Step</th><th>Temp</th><th>Time</th><th>Cycles</th></tr></thead><tbody>`;
+    let html = `<label class="cycling-enzyme-field">
+      <span>Restriction enzyme</span>
+      <select id="in-cyclingEnzyme">
+        ${CYCLING_ENZYMES.map(e => `<option value="${e.key}"${state.cycling.enzyme===e.key?' selected':''}>${escapeHtml(e.label)}</option>`).join('')}
+      </select>
+    </label>`;
+    html += `<table class="cycling-table">
+      <colgroup><col><col class="col-temp"><col class="col-time"><col class="col-cyc"></colgroup>
+      <thead><tr><th>Step</th><th>Temp</th><th>Min</th><th>&times;</th></tr></thead><tbody>`;
     state.cycling.blocks.forEach((block, bi) => {
       block.steps.forEach((step, si) => {
         html += `<tr>
           <td>${escapeHtml(step.name)}</td>
-          <td><input type="text" inputmode="decimal" class="cyc-input cyc-temp" data-block="${bi}" data-step="${si}" value="${step.temp}">&deg;C</td>
-          <td><input type="text" inputmode="decimal" class="cyc-input cyc-time" data-block="${bi}" data-step="${si}" value="${step.time}"> min</td>
-          ${si===0 ? `<td${block.steps.length>1?` rowspan="${block.steps.length}"`:''}>&times;<input type="text" inputmode="numeric" class="cyc-input cyc-cycles" data-block="${bi}" value="${block.cycles}"></td>` : ''}
+          <td class="cyc-temp-static">${fmtSmart(step.temp,1)}&deg;</td>
+          <td><input type="text" inputmode="decimal" class="cyc-input cyc-time" data-block="${bi}" data-step="${si}" value="${step.time}"></td>
+          ${si===0 ? `<td${block.steps.length>1?` rowspan="${block.steps.length}"`:''}><input type="text" inputmode="numeric" class="cyc-input cyc-cycles" data-block="${bi}" value="${block.cycles}"></td>` : ''}
         </tr>`;
       });
     });
     html += `</tbody></table>`;
     wrap.innerHTML = html;
 
-    wrap.querySelectorAll('.cyc-temp').forEach(inp => inp.addEventListener('input', e => {
-      state.cycling.blocks[+e.target.dataset.block].steps[+e.target.dataset.step].temp = parseFloat(e.target.value) || 0;
-      updateCyclingTotal();
-    }));
+    wrap.querySelector('#in-cyclingEnzyme').addEventListener('change', e => {
+      state.cycling.enzyme = e.target.value;
+      state.cycling.enzymeTouched = true;
+      applyCyclingEnzyme(state.cycling.enzyme);
+      renderCyclingTable();
+    });
     wrap.querySelectorAll('.cyc-time').forEach(inp => inp.addEventListener('input', e => {
       state.cycling.blocks[+e.target.dataset.block].steps[+e.target.dataset.step].time = parseFloat(e.target.value) || 0;
       updateCyclingTotal();
