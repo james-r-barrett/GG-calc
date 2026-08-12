@@ -86,16 +86,17 @@
           <div class="card">
             <h2>Recommended cycling</h2>
             <p id="enzyme-caption" class="note" hidden></p>
-            <table class="cycling-table">
-              <thead><tr><th>Step</th><th>Temp</th><th>Time</th><th>Cycles</th></tr></thead>
-              <tbody>
-                <tr><td>Digestion</td><td>37&deg;C</td><td>5 min</td><td rowspan="2">&times;35</td></tr>
-                <tr><td>Ligation</td><td>16&deg;C</td><td>5 min</td></tr>
-                <tr><td>Final digestion</td><td>37&deg;C</td><td>10 min</td><td>&times;1</td></tr>
-                <tr><td>Heat inactivation</td><td>65 / 80&deg;C</td><td>20 min</td><td>&times;1</td></tr>
-              </tbody>
-            </table>
-            <p class="note">These temperatures assume a 37&thinsp;&deg;C/16&thinsp;&deg;C-optimal enzyme (BsaI, BpiI). Other Type IIS enzymes have different optima &mdash; for example BsmBI/Esp3I digests best around 42&thinsp;&deg;C &mdash; so check yours and adjust the digestion step accordingly.</p>
+            <div id="cycling-table-wrap"></div>
+            <div class="cycling-settings">
+              <label class="mm-field-inline">Ramp rate <span class="unit">&deg;C/sec</span>
+                <input type="text" inputmode="decimal" id="in-rampRate" value="3">
+              </label>
+              <label class="mm-field-inline">Initial heat-up <span class="unit">min</span>
+                <input type="text" inputmode="decimal" id="in-heatup" value="5">
+              </label>
+            </div>
+            <p class="note" id="cycling-total"></p>
+            <p class="note">Times and cycle counts are editable above. These temperatures assume a 37&thinsp;&deg;C/16&thinsp;&deg;C-optimal enzyme (BsaI, BpiI). Other Type IIS enzymes have different optima &mdash; for example BsmBI/Esp3I digests best around 42&thinsp;&deg;C, with 80&thinsp;&deg;C heat inactivation &mdash; so check yours and adjust the steps accordingly.</p>
           </div>
         </aside>
       </div>

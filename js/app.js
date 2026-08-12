@@ -97,8 +97,8 @@ function init() {
 
   /* ============ App state ============ */
   let uidCounter = 1;
-  function mkInsert(mode){ return { id:'ins'+(uidCounter++), mode: mode||'custom', part:null, cat:null, conc:'', customName:'', customSeq:'', customLen:'' }; }
-  function mkAcceptor(){ return { mode:'custom', part:null, conc:'', customName:'', customSeq:'', customLen:'' }; }
+  function mkInsert(mode){ return { id:'ins'+(uidCounter++), mode: mode||'custom', part:null, cat:null, conc:'', customName:'', customSeq:'', customLen:'', calcModeOverride:null }; }
+  function mkAcceptor(){ return { mode:'custom', part:null, conc:'', customName:'', customSeq:'', customLen:'', calcModeOverride:null }; }
   function mkAssembly(){
     return {
       id: 'asm'+(uidCounter++),
@@ -133,7 +133,18 @@ function init() {
     mmOverage: 1,       // extra reactions' worth of common master mix, editable
     mmChecks: {},       // checkbox state for the shared batch rows
     assemblies: [ mkAssembly() ],
+    cycling: defaultCycling(),  // rampRate (deg C/sec, rough estimate) + heatupMin + editable step/cycle blocks
   };
+  function defaultCycling(){
+    return {
+      rampRate: 3, heatupMin: 5,
+      blocks: [
+        { cycles: 35, steps: [ { name:'Digestion', temp:37, time:5 }, { name:'Ligation', temp:16, time:5 } ] },
+        { cycles: 1,  steps: [ { name:'Final digestion', temp:37, time:10 } ] },
+        { cycles: 1,  steps: [ { name:'Heat inactivation', temp:65, time:20 } ] },
+      ],
+    };
+  }
 
   function rowSeq(row){
     if (row.mode==='custom') return cleanSeq(row.customSeq);
@@ -152,10 +163,14 @@ function init() {
     const n = parseInt(row.customLen, 10);
     return Number.isFinite(n) && n > 0 ? n : null;
   }
+  // A row can override the global sequence/length calculation mode; falls back to the global setting.
+  function rowCalcMode(row){
+    return row.calcModeOverride || state.calcMode;
+  }
   // Fragment length to *display* next to a row, independent of whether it can be used for a volume calc.
   function displayLen(row){
     if (row.mode === 'library') return row.part ? row.part.raw.s.length : null;
-    if (state.calcMode === 'length') return rowLenBp(row);
+    if (rowCalcMode(row) === 'length') return rowLenBp(row);
     const seq = rowSeq(row);
     return seq ? seq.length : null;
   }
@@ -197,11 +212,16 @@ function init() {
   function renderPartRow(container, row, opts){
     // opts: {label, items, onRemove}
     const len = displayLen(row);
-    const lengthMode = state.calcMode === 'length';
+    const lengthMode = rowCalcMode(row) === 'length';
 
     let html = `<div class="part-row-head">
         <span class="part-row-label">${opts.label}</span>
         <div class="row-actions">
+          <select class="calc-mode-select" title="Volume calculation method for this fragment">
+            <option value=""${!row.calcModeOverride?' selected':''}>Global (${state.calcMode==='length'?'Length':'Sequence'})</option>
+            <option value="sequence"${row.calcModeOverride==='sequence'?' selected':''}>Sequence composition</option>
+            <option value="length"${row.calcModeOverride==='length'?' selected':''}>Length only</option>
+          </select>
           <div class="mode-toggle">
             <button type="button" class="mode-btn${row.mode==='library'?' active':''}" data-mode="library">Library</button>
             <button type="button" class="mode-btn${row.mode==='custom'?' active':''}" data-mode="custom">Custom</button>
@@ -248,6 +268,10 @@ function init() {
       btn.addEventListener('click', () => {
         if (row.mode !== btn.dataset.mode){ row.mode = btn.dataset.mode; renderAll(); }
       });
+    });
+    container.querySelector('.calc-mode-select').addEventListener('change', e => {
+      row.calcModeOverride = e.target.value || null;
+      renderAll();
     });
     if (opts.onRemove){
       container.querySelector('[data-action="remove"]').addEventListener('click', opts.onRemove);
@@ -332,7 +356,7 @@ function init() {
     const conc = parseFloat(row.conc);
     const hasConc = conc > 0;
     let len = null, vol = null, hasData = false;
-    if (state.calcMode === 'length'){
+    if (rowCalcMode(row) === 'length'){
       len = row.mode === 'custom' ? rowLenBp(row) : (row.part ? row.part.raw.s.length : null);
       hasData = len != null;
       vol = (hasData && hasConc) ? volReqLengthUl(targetFmol, len, conc) : null;
@@ -642,6 +666,71 @@ function init() {
     if (enz) el.textContent = `Selected acceptor uses ${enz}.`;
   }
 
+  /* ============ Cycling table (editable steps/cycles + rough estimated run time) ============ */
+  // Sums step times plus ramp time (|Δtemp| / ramp rate) between every consecutive step, including
+  // between repeats of a cycled block and between blocks, plus a fixed initial heat-up allowance.
+  function cyclingTotalMinutes(){
+    const rampPerMin = (state.cycling.rampRate || 0) * 60;
+    let total = state.cycling.heatupMin || 0;
+    let currentTemp = null;
+    state.cycling.blocks.forEach(block => {
+      const cycles = Math.max(1, block.cycles || 1);
+      for (let c = 0; c < cycles; c++){
+        block.steps.forEach(step => {
+          if (currentTemp != null && rampPerMin > 0){
+            total += Math.abs(step.temp - currentTemp) / rampPerMin;
+          }
+          total += step.time || 0;
+          currentTemp = step.temp;
+        });
+      }
+    });
+    return total;
+  }
+  function fmtDuration(mins){
+    if (mins==null || isNaN(mins)) return '&ndash;';
+    const totalMin = Math.round(mins);
+    const h = Math.floor(totalMin/60), m = totalMin%60;
+    return h>0 ? `${h}h ${m}min` : `${m} min`;
+  }
+  function updateCyclingTotal(){
+    const el = document.getElementById('cycling-total');
+    if (!el) return;
+    el.innerHTML = `Estimated total run time: ~${fmtDuration(cyclingTotalMinutes())} &mdash; assumes a ${fmtSmart(state.cycling.rampRate)}&deg;C/sec block ramp rate plus ${fmtSmart(state.cycling.heatupMin)} min initial heat-up. Rough estimate only; actual cyclers vary.`;
+  }
+  function renderCyclingTable(){
+    const wrap = document.getElementById('cycling-table-wrap');
+    if (!wrap) return;
+    let html = `<table class="cycling-table"><thead><tr><th>Step</th><th>Temp</th><th>Time</th><th>Cycles</th></tr></thead><tbody>`;
+    state.cycling.blocks.forEach((block, bi) => {
+      block.steps.forEach((step, si) => {
+        html += `<tr>
+          <td>${escapeHtml(step.name)}</td>
+          <td><input type="text" inputmode="decimal" class="cyc-input cyc-temp" data-block="${bi}" data-step="${si}" value="${step.temp}">&deg;C</td>
+          <td><input type="text" inputmode="decimal" class="cyc-input cyc-time" data-block="${bi}" data-step="${si}" value="${step.time}"> min</td>
+          ${si===0 ? `<td${block.steps.length>1?` rowspan="${block.steps.length}"`:''}>&times;<input type="text" inputmode="numeric" class="cyc-input cyc-cycles" data-block="${bi}" value="${block.cycles}"></td>` : ''}
+        </tr>`;
+      });
+    });
+    html += `</tbody></table>`;
+    wrap.innerHTML = html;
+
+    wrap.querySelectorAll('.cyc-temp').forEach(inp => inp.addEventListener('input', e => {
+      state.cycling.blocks[+e.target.dataset.block].steps[+e.target.dataset.step].temp = parseFloat(e.target.value) || 0;
+      updateCyclingTotal();
+    }));
+    wrap.querySelectorAll('.cyc-time').forEach(inp => inp.addEventListener('input', e => {
+      state.cycling.blocks[+e.target.dataset.block].steps[+e.target.dataset.step].time = parseFloat(e.target.value) || 0;
+      updateCyclingTotal();
+    }));
+    wrap.querySelectorAll('.cyc-cycles').forEach(inp => inp.addEventListener('input', e => {
+      state.cycling.blocks[+e.target.dataset.block].cycles = Math.max(1, parseInt(e.target.value, 10) || 1);
+      updateCyclingTotal();
+    }));
+
+    updateCyclingTotal();
+  }
+
   function renderAll(){
     renderAssemblies();
     renderMasterMixBatch();
@@ -792,6 +881,9 @@ function init() {
     renderAll();
   });
 
+  document.getElementById('in-rampRate').addEventListener('input', e => { state.cycling.rampRate = parseFloat(e.target.value)||0; updateCyclingTotal(); });
+  document.getElementById('in-heatup').addEventListener('input', e => { state.cycling.heatupMin = parseFloat(e.target.value)||0; updateCyclingTotal(); });
+
   document.getElementById('clear-page-btn').addEventListener('click', () => {
     if (!confirm('Clear everything and start a new page? This cannot be undone.')) return;
     state.accFmol = 25;
@@ -808,14 +900,18 @@ function init() {
     state.mmOverage = 1;
     state.mmChecks = {};
     state.assemblies = [ mkAssembly() ];
+    state.cycling = defaultCycling();
 
     document.getElementById('in-accFmol').value = state.accFmol;
     document.getElementById('in-insFmol').value = state.insFmol;
     document.getElementById('in-totalVol').value = state.totalVol;
     document.getElementById('in-mmEnabled').checked = state.mm.enabled;
     document.querySelector('input[name="calcMode"][value="sequence"]').checked = true;
+    document.getElementById('in-rampRate').value = state.cycling.rampRate;
+    document.getElementById('in-heatup').value = state.cycling.heatupMin;
 
     renderMasterMixSettings();
+    renderCyclingTable();
     renderAll();
   });
 
@@ -903,6 +999,7 @@ function init() {
   });
   renderDbFilters();
   renderMasterMixSettings();
+  renderCyclingTable();
   renderAll();
 }
 
