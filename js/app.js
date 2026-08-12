@@ -38,6 +38,7 @@ function init() {
     'Dummy Sequence': '#9CA3AF',
     'Acceptor Vector': '#14213D',
     'Custom': '#8A8F98',
+    'My Parts': '#2B6CA3',
   };
   function catColor(cat){ return CAT_COLORS[cat] || '#8A8F98'; }
   function catDot(cat){ return `<span class="cat-dot" style="background:${catColor(cat)}"></span>`; }
@@ -117,6 +118,20 @@ function init() {
       checks: {},
     };
   }
+  /* ============ User-saved parts (name + optional description + length only, no sequence) ============ */
+  // Persisted in this browser only (localStorage) so lab members can remember frequently-reused
+  // fragments (e.g. a backbone) by name/length without needing to paste or store the actual sequence.
+  const USER_PARTS_KEY = 'gg-calc-user-parts-v1';
+  function loadUserParts(){
+    try {
+      const arr = JSON.parse(localStorage.getItem(USER_PARTS_KEY) || '[]');
+      return Array.isArray(arr) ? arr : [];
+    } catch(e){ return []; }
+  }
+  function saveUserParts(){
+    try { localStorage.setItem(USER_PARTS_KEY, JSON.stringify(state.userParts)); } catch(e){}
+  }
+
   const state = {
     accFmol: 25,
     insFmol: 50,
@@ -134,6 +149,7 @@ function init() {
     mmChecks: {},       // checkbox state for the shared batch rows
     assemblies: [ mkAssembly() ],
     cycling: defaultCycling(),  // rampRate (deg C/sec, rough estimate) + heatupMin + editable step/cycle blocks
+    userParts: loadUserParts(),  // [{id, n:name, note:description, len:bp}], no sequence
   };
   // Recommended digestion / heat-inactivation temperatures per Type IIS enzyme (rough, manufacturer defaults).
   // Ligation always runs at 16°C (T4 ligase) regardless of the restriction enzyme, so it isn't listed here.
@@ -188,13 +204,24 @@ function init() {
     const n = parseInt(row.customLen, 10);
     return Number.isFinite(n) && n > 0 ? n : null;
   }
+  // Length of a library/user part regardless of whether the full sequence is known.
+  function partLen(raw){
+    if (raw.s) return raw.s.length;
+    return Number.isFinite(raw.len) ? raw.len : null;
+  }
+  // Saved parts (My Parts) only ever record a length, never a sequence, so they can't use the
+  // exact sequence-composition method -- force length-only for them regardless of any setting.
+  function rowHasSeq(row){
+    return row.mode !== 'library' || !!(row.part && row.part.raw.s);
+  }
   // A row can override the global sequence/length calculation mode; falls back to the global setting.
   function rowCalcMode(row){
+    if (!rowHasSeq(row)) return 'length';
     return row.calcModeOverride || state.calcMode;
   }
   // Fragment length to *display* next to a row, independent of whether it can be used for a volume calc.
   function displayLen(row){
-    if (row.mode === 'library') return row.part ? row.part.raw.s.length : null;
+    if (row.mode === 'library') return row.part ? partLen(row.part.raw) : null;
     if (rowCalcMode(row) === 'length') return rowLenBp(row);
     const seq = rowSeq(row);
     return seq ? seq.length : null;
@@ -237,16 +264,17 @@ function init() {
   function renderPartRow(container, row, opts){
     // opts: {label, items, onRemove}
     const len = displayLen(row);
+    const hasSeq = rowHasSeq(row);
     const lengthMode = rowCalcMode(row) === 'length';
 
     let html = `<div class="part-row-head">
         <span class="part-row-label">${opts.label}</span>
         <div class="row-actions">
-          <select class="calc-mode-select" title="Volume calculation method for this fragment">
+          ${hasSeq ? `<select class="calc-mode-select" title="Volume calculation method for this fragment">
             <option value=""${!row.calcModeOverride?' selected':''}>Global (${state.calcMode==='length'?'Length':'Sequence'})</option>
             <option value="sequence"${row.calcModeOverride==='sequence'?' selected':''}>Sequence composition</option>
             <option value="length"${row.calcModeOverride==='length'?' selected':''}>Length only</option>
-          </select>
+          </select>` : `<span class="calc-mode-forced" title="Saved parts only record a length, so the exact sequence-composition method isn't available">Length only</span>`}
           <div class="mode-toggle">
             <button type="button" class="mode-btn${row.mode==='library'?' active':''}" data-mode="library">Library</button>
             <button type="button" class="mode-btn${row.mode==='custom'?' active':''}" data-mode="custom">Custom</button>
@@ -294,10 +322,13 @@ function init() {
         if (row.mode !== btn.dataset.mode){ row.mode = btn.dataset.mode; renderAll(); }
       });
     });
-    container.querySelector('.calc-mode-select').addEventListener('change', e => {
-      row.calcModeOverride = e.target.value || null;
-      renderAll();
-    });
+    const calcModeSel = container.querySelector('.calc-mode-select');
+    if (calcModeSel){
+      calcModeSel.addEventListener('change', e => {
+        row.calcModeOverride = e.target.value || null;
+        renderAll();
+      });
+    }
     if (opts.onRemove){
       container.querySelector('[data-action="remove"]').addEventListener('click', opts.onRemove);
     }
@@ -345,7 +376,7 @@ function init() {
           <div class="combo-item${i===activeIdx?' active':''}" role="option" data-idx="${i}">
             ${catDot(it.cat)}
             <span class="ci-name">${escapeHtml(it.raw.n)}</span>
-            <span class="ci-len mono">${it.raw.s.length} bp</span>
+            <span class="ci-len mono">${partLen(it.raw)} bp</span>
           </div>`).join('');
         panel.querySelectorAll('.combo-item').forEach(el => {
           el.addEventListener('mousedown', (e) => {
@@ -382,7 +413,7 @@ function init() {
     const hasConc = conc > 0;
     let len = null, vol = null, hasData = false;
     if (rowCalcMode(row) === 'length'){
-      len = row.mode === 'custom' ? rowLenBp(row) : (row.part ? row.part.raw.s.length : null);
+      len = row.mode === 'custom' ? rowLenBp(row) : (row.part ? partLen(row.part.raw) : null);
       hasData = len != null;
       vol = (hasData && hasConc) ? volReqLengthUl(targetFmol, len, conc) : null;
     } else {
@@ -987,12 +1018,23 @@ function init() {
     details: [l.pos?('Positions '+l.pos):null, l.lvl!=null?('Level '+l.lvl):null].filter(Boolean).join(' · ')
   }));
 
-  const DB_CATS = Array.from(new Set(ALL_DB.map(d => d.cat))).sort();
+  // Keeps INSERTABLE (assembly-row combobox) and ALL_DB (Part Library table) in sync with the
+  // user's saved parts; rebuilt wholesale on every add/delete rather than tracked incrementally.
+  function syncUserPartsIntoLists(){
+    for (let i = INSERTABLE.length - 1; i >= 0; i--) if (INSERTABLE[i].kind === 'user') INSERTABLE.splice(i, 1);
+    for (let i = ALL_DB.length - 1; i >= 0; i--) if (ALL_DB[i].kind === 'user') ALL_DB.splice(i, 1);
+    state.userParts.forEach(up => {
+      const raw = { id: up.id, n: up.n, note: up.note, len: up.len };
+      INSERTABLE.push({ kind:'user', raw, cat:'My Parts' });
+      ALL_DB.push({ kind:'user', raw, name: up.n, cat:'My Parts', len: up.len, details: up.note || '' });
+    });
+  }
+
   let dbActiveFilter = 'All';
 
   function renderDbFilters(){
     const wrap = document.getElementById('db-filters');
-    const cats = ['All', ...DB_CATS];
+    const cats = ['All', ...Array.from(new Set(ALL_DB.map(d => d.cat))).sort()];
     wrap.innerHTML = cats.map(c => `<button type="button" class="filter-chip${c===dbActiveFilter?' active':''}" data-cat="${escapeHtml(c)}">${c==='All'?'':catDot(c)}${escapeHtml(c)}</button>`).join('');
     wrap.querySelectorAll('.filter-chip').forEach(chip => {
       chip.addEventListener('click', () => { dbActiveFilter = chip.dataset.cat; renderDbTable(); });
@@ -1010,7 +1052,7 @@ function init() {
         <td class="dlen mono">${d.len} bp</td>
         <td class="ddetails">${escapeHtml(d.details)}</td>
         <td class="dactions">
-          <button type="button" class="icon-btn" data-copy="${i}">Copy seq</button>
+          ${d.raw.s ? `<button type="button" class="icon-btn" data-copy="${i}">Copy seq</button>` : ''}
           <button type="button" class="icon-btn" data-use="${i}">Use&nbsp;&rarr;</button>
         </td>
       </tr>`).join('');
@@ -1039,10 +1081,61 @@ function init() {
   }
   document.getElementById('db-search').addEventListener('input', renderDbTable);
 
+  /* ============ My saved parts (name + optional description + length, no sequence) ============ */
+  function renderUserPartsList(){
+    const countEl = document.getElementById('user-parts-count');
+    if (countEl) countEl.textContent = state.userParts.length ? `(${state.userParts.length})` : '';
+    const wrap = document.getElementById('my-parts-list');
+    if (!wrap) return;
+    if (!state.userParts.length){
+      wrap.innerHTML = `<p class="note">No saved parts yet &mdash; add one above.</p>`;
+      return;
+    }
+    wrap.innerHTML = `<table class="db-table my-parts-table">
+      <thead><tr><th>Name</th><th>Length</th><th>Description</th><th></th></tr></thead>
+      <tbody>
+        ${state.userParts.map(up => `
+          <tr>
+            <td class="dname">${escapeHtml(up.n)}</td>
+            <td class="dlen mono">${up.len} bp</td>
+            <td class="ddetails">${escapeHtml(up.note||'')}</td>
+            <td class="dactions"><button type="button" class="icon-btn" data-del="${escapeHtml(up.id)}">Delete</button></td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+    wrap.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => {
+      state.userParts = state.userParts.filter(up => up.id !== b.dataset.del);
+      saveUserParts();
+      syncUserPartsIntoLists();
+      renderUserPartsList();
+      renderDbFilters();
+      renderDbTable();
+    }));
+  }
+  document.getElementById('mp-add-btn').addEventListener('click', () => {
+    const nameEl = document.getElementById('mp-name');
+    const descEl = document.getElementById('mp-desc');
+    const lenEl = document.getElementById('mp-len');
+    const name = nameEl.value.trim();
+    const len = parseInt(lenEl.value, 10);
+    if (!name){ nameEl.focus(); return; }
+    if (!Number.isFinite(len) || len <= 0){ lenEl.focus(); return; }
+    state.userParts.push({ id:'up'+(uidCounter++), n:name, note:descEl.value.trim(), len });
+    saveUserParts();
+    syncUserPartsIntoLists();
+    nameEl.value = ''; descEl.value = ''; lenEl.value = '';
+    renderUserPartsList();
+    renderDbFilters();
+    renderDbTable();
+    nameEl.focus();
+  });
+
   /* ============ Init ============ */
   document.addEventListener('click', (e) => {
     if (openCombo && !openCombo.panel.contains(e.target) && e.target !== openCombo.input) closeOpenCombo();
   });
+  syncUserPartsIntoLists();
+  renderUserPartsList();
   renderDbFilters();
   renderMasterMixSettings();
   renderCyclingTable();
