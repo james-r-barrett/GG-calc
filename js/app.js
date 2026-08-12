@@ -792,6 +792,33 @@ function init() {
     renderAll();
   });
 
+  document.getElementById('clear-page-btn').addEventListener('click', () => {
+    if (!confirm('Clear everything and start a new page? This cannot be undone.')) return;
+    state.accFmol = 25;
+    state.insFmol = 50;
+    state.totalVol = 10;
+    state.calcMode = 'sequence';
+    state.mm = {
+      enabled: false, bufferType: 'homemade',
+      bufferVol: null, bufferTouched: false,
+      bufferAVol: 1, bufferBVol: 1,
+      ligaseVol: null, ligaseTouched: false,
+      enzymeVol: null, enzymeTouched: false,
+    };
+    state.mmOverage = 1;
+    state.mmChecks = {};
+    state.assemblies = [ mkAssembly() ];
+
+    document.getElementById('in-accFmol').value = state.accFmol;
+    document.getElementById('in-insFmol').value = state.insFmol;
+    document.getElementById('in-totalVol').value = state.totalVol;
+    document.getElementById('in-mmEnabled').checked = state.mm.enabled;
+    document.querySelector('input[name="calcMode"][value="sequence"]').checked = true;
+
+    renderMasterMixSettings();
+    renderAll();
+  });
+
   /* ============ Tabs ============ */
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
