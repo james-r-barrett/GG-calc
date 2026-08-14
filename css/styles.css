@@ -342,6 +342,9 @@
 
   /* ---------- My saved parts ---------- */
   .my-parts-card{ margin-bottom:20px; }
+  .my-parts-heading{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .my-parts-heading h2{ margin-bottom:0; }
+  .my-parts-io{ display:flex; gap:8px; }
   .my-parts-form{ display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
   .my-parts-form input{ flex:1 1 160px; min-width:120px; }
   .my-parts-form input#mp-len{ flex:0 1 120px; }

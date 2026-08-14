@@ -15,6 +15,11 @@ function init() {
      PARTS   — L0 parts:      {n:name, s:seq, t:type, s5:5' syntax, s3:3' syntax}
      ACCEPT  — acceptor/resistance vectors: {n, s, enz:enzyme, lvl:level acceptor, pos:position at L2, mark:selectable marker}
      LINKERS — end linkers / dummy fragments: {n, s, t:type, pos:positions occupied, lvl:level}
+
+     Any entry in these three lists may omit `s` (sequence) and give `len` (integer, bp)
+     instead, e.g. {n:"pXYZ-001", len:2734, t:"Promoter"}. Such parts are fully selectable
+     and usable in volume calculations (length-only mode), but their sequence is never
+     fetched, displayed, or exposed via "Copy seq" — only the name, category and length.
   */
 
   /* ============ Category colours ============ */
@@ -1006,15 +1011,16 @@ function init() {
   /* ============ Part Library tab ============ */
   const ALL_DB = [];
   ACCEPT.forEach(a => ALL_DB.push({
-    kind:'acceptor', raw:a, name:a.n, cat:'Acceptor Vector', len:a.s.length,
-    details: [a.enz, a.lvl!=null&&a.lvl!=='' ? 'Level '+a.lvl : null, a.pos&&a.pos!=='-' ? 'Position '+a.pos : null, a.mark].filter(Boolean).join(' · ')
+    kind:'acceptor', raw:a, name:a.n, cat:'Acceptor Vector', len:partLen(a),
+    details: [a.desc, a.enz, a.lvl!=null&&a.lvl!=='' ? 'Level '+a.lvl : null, a.pos&&a.pos!=='-' ? 'Position '+a.pos : null,
+      (a.s5||a.s3) ? `5′ ${a.s5||''} · 3′ ${a.s3||''}` : null, a.mark].filter(Boolean).join(' · ')
   }));
   PARTS.forEach(p => ALL_DB.push({
-    kind:'part', raw:p, name:p.n, cat:(p.t||'').trim(), len:p.s.length,
+    kind:'part', raw:p, name:p.n, cat:(p.t||'').trim(), len:partLen(p),
     details: `5′ ${p.s5||''}  ·  3′ ${p.s3||''}`
   }));
   LINKERS.forEach(l => ALL_DB.push({
-    kind:'linker', raw:l, name:l.n, cat:(l.t||'').trim(), len:l.s.length,
+    kind:'linker', raw:l, name:l.n, cat:(l.t||'').trim(), len:partLen(l),
     details: [l.pos?('Positions '+l.pos):null, l.lvl!=null?('Level '+l.lvl):null].filter(Boolean).join(' · ')
   }));
 
@@ -1112,6 +1118,46 @@ function init() {
       renderDbTable();
     }));
   }
+  document.getElementById('mp-download-btn').addEventListener('click', () => {
+    const payload = JSON.stringify(state.userParts.map(up => ({ n: up.n, note: up.note || '', len: up.len })), null, 2);
+    const blob = new Blob([payload], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'my-parts.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+  document.getElementById('mp-upload-btn').addEventListener('click', () => {
+    document.getElementById('mp-upload-input').click();
+  });
+  document.getElementById('mp-upload-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    file.text().then(text => {
+      let arr;
+      try { arr = JSON.parse(text); } catch(err){ alert('That file is not valid JSON.'); return; }
+      if (!Array.isArray(arr)){ alert('Expected a JSON array of parts.'); return; }
+      const existingNames = new Set(state.userParts.map(up => up.n));
+      let added = 0, skipped = 0;
+      arr.forEach(entry => {
+        const name = (entry && entry.n || '').toString().trim();
+        const len = parseInt(entry && entry.len, 10);
+        if (!name || !Number.isFinite(len) || len <= 0){ skipped++; return; }
+        if (existingNames.has(name)){ skipped++; return; }
+        state.userParts.push({ id:'up'+(uidCounter++), n:name, note:(entry.note||'').toString().trim(), len });
+        existingNames.add(name);
+        added++;
+      });
+      saveUserParts();
+      syncUserPartsIntoLists();
+      renderUserPartsList();
+      renderDbFilters();
+      renderDbTable();
+      if (skipped) alert(`Imported ${added} part(s). Skipped ${skipped} (invalid or already saved).`);
+    });
+  });
   document.getElementById('mp-add-btn').addEventListener('click', () => {
     const nameEl = document.getElementById('mp-name');
     const descEl = document.getElementById('mp-desc');

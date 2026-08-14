@@ -178,8 +178,15 @@
 
     <section id="tab-db" class="tab-panel" hidden>
       <div class="card my-parts-card">
-        <h2>My saved parts <span class="count" id="user-parts-count"></span></h2>
-        <p class="note">Remember a fragment by name and length when you don't have (or don't need) the full sequence &mdash; handy for backbones and parts the lab reuses often. Saved parts appear here and in the search below, and are stored only in this browser.</p>
+        <div class="my-parts-heading">
+          <h2>My saved parts <span class="count" id="user-parts-count"></span></h2>
+          <div class="my-parts-io">
+            <button type="button" id="mp-download-btn" class="icon-btn">Download</button>
+            <button type="button" id="mp-upload-btn" class="icon-btn">Upload</button>
+            <input type="file" id="mp-upload-input" accept="application/json,.json" hidden>
+          </div>
+        </div>
+        <p class="note">Remember a fragment by name and length when you don't have (or don't need) the full sequence &mdash; handy for backbones and parts the lab reuses often. Saved parts appear here and in the search below, and are stored only in this browser &mdash; use Download/Upload to back them up or move them to another browser.</p>
         <div class="my-parts-form">
           <input type="text" id="mp-name" placeholder="Part name">
           <input type="text" id="mp-desc" placeholder="Description (optional)">
