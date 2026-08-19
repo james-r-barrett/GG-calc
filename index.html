@@ -182,9 +182,11 @@
             <input type="file" id="mp-restore-input" accept="application/json,.json" hidden>
             <button type="button" id="mp-csv-btn" class="icon-btn">Add parts from CSV</button>
             <input type="file" id="mp-csv-input" accept="text/csv,.csv" hidden>
+            <button type="button" id="mp-gb-btn" class="icon-btn">Add from GenBank</button>
+            <input type="file" id="mp-gb-input" accept=".gb,.gbk,.genbank,.txt,text/plain" multiple hidden>
           </div>
         </div>
-        <p class="note">Remember a fragment by name and length when you don't have (or don't need) the full sequence &mdash; handy for backbones and parts the lab reuses often. Saved parts appear here and in the search below. Add parts from CSV to bulk-import a spreadsheet (columns: name, description, length in bp, and an optional 4th column &mdash; "acceptor" or "insert", defaults to insert).</p>
+        <p class="note">Remember a fragment by name and length when you don't have (or don't need) the full sequence &mdash; handy for backbones and parts the lab reuses often. Saved parts appear here and in the search below. Add parts from CSV to bulk-import a spreadsheet (columns: name, description, length in bp, and an optional 4th column &mdash; "acceptor" or "insert", defaults to insert). Add from GenBank reads one or more .gb/.gbk files' LOCUS/DEFINITION/ORIGIN (e.g. downloaded from Addgene or a sequencing provider) &mdash; select a single file with one record to review it in the form below first, or select multiple files/a multi-record file to import them all straight away. Only the name, description and calculated length are kept, not the sequence itself.</p>
         <p class="warning">These parts are cached in this browser only &mdash; they are <strong>not</strong> stored on a server or synced anywhere. Clearing your browser data will delete them. Use Download backup regularly and keep the file somewhere safe; you are responsible for your own backups.</p>
         <div class="my-parts-seqcalc">
           <input type="text" id="mp-seq" placeholder="Paste a sequence here to auto-calculate its length&hellip;">

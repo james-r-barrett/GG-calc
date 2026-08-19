@@ -1644,6 +1644,58 @@ function init() {
     });
   });
 
+  // Parses one or more GenBank flat-file records (split on the "//" record terminator), pulling
+  // just LOCUS name/length, DEFINITION, and ORIGIN sequence -- the sequence itself is only used to
+  // compute a length and is discarded (saved parts never store sequence, see USER_PARTS_KEY above).
+  function parseGenbank(text){
+    const records = [];
+    text.split(/\r?\n\/\/\s*\r?\n?/).map(s => s.trim()).filter(Boolean).forEach(chunk => {
+      const locusMatch = /^LOCUS\s+(\S+)\s+(\d+)\s*bp/im.exec(chunk);
+      if (!locusMatch) return;
+      const defMatch = /^DEFINITION\s+([^\n]*)/im.exec(chunk);
+      let desc = defMatch ? defMatch[1].trim() : '';
+      if (desc === '.') desc = '';
+      const originIdx = chunk.search(/^ORIGIN/im);
+      let seq = '';
+      if (originIdx !== -1){
+        seq = chunk.slice(originIdx).replace(/^ORIGIN.*$/im, '').replace(/[^a-zA-Z]/g, '').toUpperCase();
+      }
+      records.push({ name: locusMatch[1], desc, seq, len: seq.length || parseInt(locusMatch[2], 10) });
+    });
+    return records;
+  }
+  document.getElementById('mp-gb-btn').addEventListener('click', () => {
+    document.getElementById('mp-gb-input').click();
+  });
+  document.getElementById('mp-gb-input').addEventListener('change', (e) => {
+    const files = Array.from(e.target.files);
+    e.target.value = '';
+    if (!files.length) return;
+    Promise.all(files.map(f => f.text())).then(texts => {
+      const records = texts.flatMap(parseGenbank);
+      if (!records.length){ alert('No LOCUS/ORIGIN records found in that file.'); return; }
+      // A single file holding exactly one record: fill the form for review before saving.
+      // Multiple files and/or multi-record files: nothing to review against, so import directly.
+      if (files.length === 1 && records.length === 1){
+        const r = records[0];
+        document.getElementById('mp-name').value = r.name || '';
+        document.getElementById('mp-desc').value = r.desc || '';
+        const seqEl = document.getElementById('mp-seq');
+        if (r.seq){
+          seqEl.value = r.seq;
+          seqEl.dispatchEvent(new Event('input'));
+        } else {
+          document.getElementById('mp-len').value = r.len || '';
+        }
+        document.getElementById('mp-name').focus();
+      } else {
+        const entries = records.map(r => ({ n: r.name, note: r.desc, len: r.len }));
+        const { added, skipped } = importUserParts(entries);
+        alert(`Imported ${added} part(s) from GenBank.${skipped ? ` Skipped ${skipped} (invalid or already saved).` : ''}`);
+      }
+    });
+  });
+
   // Paste a raw sequence to live-calculate its length (ignores FASTA header lines & whitespace) into the length field.
   document.getElementById('mp-seq').addEventListener('input', (e) => {
     const resultEl = document.getElementById('mp-seq-result');
