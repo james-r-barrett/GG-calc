@@ -138,8 +138,8 @@ function init() {
   }
 
   const state = {
-    accFmol: 25,
-    insFmol: 50,
+    accFmol: 25, accFmolTouched: false,   // default scales with insert count -- see fmolCurrent()
+    insFmol: 50, insFmolTouched: false,
     totalVol: 10,
     calcMode: 'sequence', // 'sequence' | 'length'
     mm: {
@@ -156,20 +156,23 @@ function init() {
     cycling: defaultCycling(),  // rampRate (deg C/sec, rough estimate) + heatupMin + editable step/cycle blocks
     userParts: loadUserParts(),  // [{id, n:name, note:description, len:bp}], no sequence
   };
-  // Recommended digestion / heat-inactivation temperatures per Type IIS enzyme (rough, manufacturer defaults).
+  // Recommended digestion temperatures per Type IIS enzyme (NEB Golden Gate guidance).
   // Ligation always runs at 16°C (T4 ligase) regardless of the restriction enzyme, so it isn't listed here.
+  // The final digestion step (60°C, 5 min) and hold (4°C) are the same for every enzyme.
   const CYCLING_ENZYMES = [
-    { key:'bsai',   label:'BsaI / BsaI-HFv2',      digest:37, heatInact:65 },
-    { key:'bbsi',   label:'BbsI-HF (BpiI)',        digest:37, heatInact:65 },
-    { key:'bspqi',  label:'BspQI (SapI)',          digest:37, heatInact:65 },
-    { key:'bsmbi',  label:'BsmBI-v2 (Esp3I)',      digest:42, heatInact:80 },
-    { key:'custom', label:'Custom / other',        digest:null, heatInact:null },
+    { key:'bsai',   label:'BsaI-HF / BsaI-HFv2',         digest:37 },
+    { key:'bbsi',   label:'BbsI-HF (BpiI)',              digest:37 },
+    { key:'sapi',   label:'SapI / BspQI-HF / PaqCI',     digest:37 },
+    { key:'bspqi',  label:'BspQI (non-HF)',              digest:42 },
+    { key:'bsmbi',  label:'BsmBI-v2 (Esp3I)',            digest:42 },
+    { key:'custom', label:'Custom / other',              digest:null },
   ];
   function enzymeKeyFromName(name){
     const n = (name||'').toLowerCase();
     if (n.includes('bsai')) return 'bsai';
     if (n.includes('bbsi') || n.includes('bpii')) return 'bbsi';
-    if (n.includes('bspqi') || n.includes('sapi')) return 'bspqi';
+    if (n.includes('sapi') || n.includes('paqci')) return 'sapi';
+    if (n.includes('bspqi')) return 'bspqi';
     if (n.includes('bsmbi') || n.includes('esp3i')) return 'bsmbi';
     return null;
   }
@@ -177,19 +180,160 @@ function init() {
     const e = CYCLING_ENZYMES.find(x => x.key === key);
     if (!e || e.digest == null) return;
     state.cycling.blocks[0].steps[0].temp = e.digest;      // Digestion
-    state.cycling.blocks[1].steps[0].temp = e.digest;      // Final digestion
-    state.cycling.blocks[2].steps[0].temp = e.heatInact;   // Heat inactivation
   }
   function defaultCycling(){
     return {
-      rampRate: 3, heatupMin: 5,
+      rampRate: 3, heatupMin: 5,   // fixed rough estimates, not user-editable -- stated in the blurb instead
       enzyme: 'bsai', enzymeTouched: false,   // enzymeTouched: user picked manually, stop auto-syncing to the selected acceptor
+      timeBudgetHours: '1', timeBudgetMinutes: '25',   // pre-filled example time -- auto-optimised against on first open, remembered thereafter if the user edits it
+      appliedSummary: '',
+      timeWarning: null,   // set when a time-optimise fit falls below the standard 30x1min protocol; shown in its own box, not inline in appliedSummary
+      summaryKind: 'recommended',   // 'recommended'/'overnight'/'quick': appliedSummary text is regenerated from this + the current enzyme whenever the enzyme changes; 'time' summaries are custom-worded and left alone
+      activeMode: 'recommended',   // which of the 3 always-present buttons (recommended/overnight/time) is highlighted + governs whether the time-fill dialog shows
+      protocolMode: 'auto', autoFragCount: null,   // 'auto': keep re-applying the recommended tier as fragment count changes; 'manual': user picked time-fill/overnight/single-stage/hand-edited a step, stop tracking
       blocks: [
-        { cycles: 35, steps: [ { name:'Digestion', temp:37, time:5 }, { name:'Ligation', temp:16, time:5 } ] },
-        { cycles: 1,  steps: [ { name:'Final digestion', temp:37, time:10 } ] },
-        { cycles: 1,  steps: [ { name:'Heat inactivation', temp:65, time:20 } ] },
+        { cycles: 30, steps: [ { name:'Digestion', temp:37, time:1 }, { name:'Ligation', temp:16, time:1 } ] },
+        { cycles: 1,  steps: [ { name:'Final digestion', temp:60, time:5 } ] },
+        { cycles: 1,  steps: [ { name:'Hold', temp:4, time:0 } ] },
       ],
     };
+  }
+
+  // Fragment count for an assembly = 1 acceptor/backbone + N inserts.
+  function assemblyFragmentCount(asm){ return 1 + asm.inserts.length; }
+  function maxFragmentCount(){
+    return state.assemblies.reduce((m, a) => Math.max(m, assemblyFragmentCount(a)), 1);
+  }
+  // Complexity tier by insert count, used to scale default fmol targets and enzyme/ligase volumes:
+  // a single insert needs less than a multi-part assembly, and a large (7+) assembly needs more still.
+  function insertTier(n){
+    if (n <= 1) return 0;
+    if (n <= 6) return 1;
+    return 2;
+  }
+  function maxInsertCount(){
+    return state.assemblies.reduce((m, a) => Math.max(m, a.inserts.length), 1);
+  }
+  const FMOL_TIER_DEFAULTS = [ { acc:10, ins:20 }, { acc:20, ins:40 }, { acc:40, ins:80 } ];
+  const MM_TIER_DEFAULTS = [ { enzyme:0.3, ligase:0.5 }, { enzyme:0.6, ligase:1 }, { enzyme:1.2, ligase:2 } ];
+  function fmolDefaults(){ return FMOL_TIER_DEFAULTS[insertTier(maxInsertCount())]; }
+  function fmolCurrent(){
+    const d = fmolDefaults();
+    return {
+      acc: state.accFmolTouched ? state.accFmol : d.acc,
+      ins: state.insFmolTouched ? state.insFmol : d.ins,
+    };
+  }
+  // Default cycling scheme by assembly complexity, on the same insert-count tiers as the fmol and
+  // enzyme/ligase defaults (see insertTier()): a single insert needs less time than a multi-part
+  // assembly, and a large (7+) assembly needs longer steps still.
+  function recommendedScheme(insertCount){
+    const t = insertTier(insertCount);
+    if (t === 0) return { cycles:30, stepMin:1, tier:'1 insert' };
+    if (t === 1) return { cycles:30, stepMin:1, tier:'2–6 inserts' };
+    return { cycles:30, stepMin:5, tier:'7+ inserts' };
+  }
+  // The minimal viable protocol per NEB's Golden Gate Assembly Kit manual, offered only as a
+  // time-crunch fallback (not the default) when even 30x1min doesn't fit the available time. Fast
+  // (37°C) enzymes can skip cycling entirely with a single incubation; slow (42°C) enzymes still
+  // need at least 15 cycles.
+  function quickScheme(digestTemp){
+    return digestTemp === 42
+      ? { mode:'cycle', cycles:15, stepMin:1 }
+      : { mode:'single', time:15 };
+  }
+  function applyQuickScheme(scheme, digestTemp){
+    if (scheme.mode === 'single') applySingleStageBlocks(digestTemp, scheme.time);
+    else applySchemeToBlocks(scheme.cycles, scheme.stepMin);
+  }
+  // Sets the main cycling block to (cycles, stepMin) and pins the final digestion (60°C, 5 min)
+  // and hold (4°C) steps, regardless of enzyme or fragment count.
+  function applySchemeToBlocks(cycles, stepMin){
+    const b0 = state.cycling.blocks[0];
+    const digestTemp = b0.steps[0] ? b0.steps[0].temp : 37;
+    b0.cycles = cycles;
+    // Rebuilt from scratch (rather than assuming b0.steps[0]/[1] exist) so this also recovers
+    // cleanly from the single-stage layout, which collapses this block to one step.
+    b0.steps = [ { name:'Digestion', temp: digestTemp, time: stepMin }, { name:'Ligation', temp:16, time: stepMin } ];
+    const b1 = state.cycling.blocks[1];
+    b1.cycles = 1; b1.steps[0].temp = 60; b1.steps[0].time = 5;
+    const b2 = state.cycling.blocks[2];
+    b2.cycles = 1; b2.steps[0].temp = 4; b2.steps[0].time = 0;
+  }
+  // Alternative to cycling for simple, time-pressed assemblies: one combined digestion/ligation
+  // incubation instead of repeated cycles, followed by the same fixed final digestion and hold.
+  function applySingleStageBlocks(digestTemp, timeMin){
+    const b0 = state.cycling.blocks[0];
+    b0.cycles = 1;
+    b0.steps = [ { name:'Digestion + Ligation', temp: digestTemp, time: timeMin || 15 } ];
+    const b1 = state.cycling.blocks[1];
+    b1.cycles = 1; b1.steps[0].temp = 60; b1.steps[0].time = 5;
+    const b2 = state.cycling.blocks[2];
+    b2.cycles = 1; b2.steps[0].temp = 4; b2.steps[0].time = 0;
+  }
+  // Read-only total-time estimate for a candidate (cycles, stepMin) main-cycling block, followed by
+  // the fixed final digestion (60°C/5min) and hold (4°C) tail. Mirrors cyclingTotalMinutes()'s ramp math.
+  function estimateTotalMinutes(cycles, stepMin, digestTemp){
+    const rampPerMin = (state.cycling.rampRate || 0) * 60;
+    let total = state.cycling.heatupMin || 0;
+    let currentTemp = null;
+    const advance = (temp, time) => {
+      if (currentTemp != null && rampPerMin > 0) total += Math.abs(temp - currentTemp) / rampPerMin;
+      total += time;
+      currentTemp = temp;
+    };
+    for (let c = 0; c < cycles; c++){
+      advance(digestTemp, stepMin);
+      advance(16, stepMin);
+    }
+    advance(60, 5);
+    advance(4, 0);
+    return total;
+  }
+  // Fill-the-time search. Anchored on 30 cycles x 5 min -- NEB's own baseline for a standard
+  // assembly -- rather than treating cycles and step time as equally free. The cycle cap depends on
+  // fragment count: 30x5min is the optimal ceiling for the <20-fragment tiers (see recommendedScheme),
+  // so extra time beyond that isn't spent on more cycles unless the assembly is complex enough
+  // (>20 fragments) to benefit, per the tested pilot data (see the efficiency/accuracy chart) up to 60.
+  //
+  // Per cycle, only the step time varies with the fit -- ramp time between steps depends only on the
+  // fixed temperatures, not on how long each step runs -- so total time is exactly linear in step
+  // time for a given cycle count: estimateTotalMinutes(C, s) = overhead(C) + 2*C*s. That lets step
+  // time be solved for exactly (down to the second) instead of only tried at whole-minute increments.
+  const FILL_TIME_ANCHOR_CYCLES = 30, FILL_TIME_ANCHOR_STEPMIN = 5;
+  function fillTimeCycleCap(fragCount){ return fragCount > 20 ? 60 : FILL_TIME_ANCHOR_CYCLES; }
+  function suggestFillTime(availableMinutes, digestTemp, fragCount){
+    const cap = fillTimeCycleCap(fragCount);
+    const overhead = cycles => estimateTotalMinutes(cycles, 0, digestTemp);
+    const timeAt = (cycles, stepMin) => overhead(cycles) + 2 * cycles * stepMin;
+    const anchorMinutes = timeAt(FILL_TIME_ANCHOR_CYCLES, FILL_TIME_ANCHOR_STEPMIN);
+    const minMinutes = timeAt(FILL_TIME_ANCHOR_CYCLES, 1);
+
+    if (availableMinutes >= anchorMinutes){
+      // At or above the 30x5min anchor: grow cycles (5 min each) up to `cap` -- a no-op for the
+      // <20-fragment tiers, where cap is already 30, so the result just stays at the 30x5min ceiling.
+      let cycles = FILL_TIME_ANCHOR_CYCLES;
+      while (cycles < cap && timeAt(cycles + 1, 5) <= availableMinutes) cycles++;
+      return { cycles, stepMin: 5, minutes: timeAt(cycles, 5), shortfall: false, belowMinimum: false };
+    }
+
+    if (availableMinutes >= minMinutes){
+      // Below the anchor but at/above the 30x1min floor: cycles stay fixed at 30 and step time is
+      // solved exactly to use up whatever time is left.
+      const stepMin = Math.min(5, Math.max(1, (availableMinutes - overhead(FILL_TIME_ANCHOR_CYCLES)) / (2 * FILL_TIME_ANCHOR_CYCLES)));
+      return { cycles: FILL_TIME_ANCHOR_CYCLES, stepMin, minutes: timeAt(FILL_TIME_ANCHOR_CYCLES, stepMin), shortfall: false, belowMinimum: false };
+    }
+
+    // Even 30 cycles at 1 min doesn't fit -- below the minimum sane protocol. Find the most cycles
+    // that fit at the 1 min floor, then spend any leftover slack on step time (still exact), rather
+    // than presenting this as a normal fit.
+    let cycles = 1;
+    while (cycles < FILL_TIME_ANCHOR_CYCLES && timeAt(cycles + 1, 1) <= availableMinutes) cycles++;
+    if (timeAt(cycles, 1) > availableMinutes){
+      return { cycles, stepMin: 1, minutes: timeAt(cycles, 1), shortfall: true, belowMinimum: true };
+    }
+    const stepMin = Math.min(5, (availableMinutes - overhead(cycles)) / (2 * cycles));
+    return { cycles, stepMin, minutes: timeAt(cycles, stepMin), shortfall: false, belowMinimum: true };
   }
 
   function rowSeq(row){
@@ -234,7 +378,8 @@ function init() {
 
   /* ============ Master mix defaults ============ */
   function mmDefaults(){
-    return { buffer: state.totalVol/10, ligase: state.totalVol/40, enzyme: state.totalVol/20 };
+    const t = MM_TIER_DEFAULTS[insertTier(maxInsertCount())];
+    return { buffer: state.totalVol/10, ligase: t.ligase, enzyme: t.enzyme };
   }
   function mmCurrent(){
     const d = mmDefaults();
@@ -276,7 +421,7 @@ function init() {
         <span class="part-row-label">${opts.label}</span>
         <div class="row-actions">
           ${hasSeq ? `<select class="calc-mode-select" title="Volume calculation method for this fragment">
-            <option value=""${!row.calcModeOverride?' selected':''}>Global (${state.calcMode==='length'?'Length':'Sequence'})</option>
+            <option value=""${!row.calcModeOverride?' selected':''}>${state.calcMode==='length'?'Length':'Sequence'} (default)</option>
             <option value="sequence"${row.calcModeOverride==='sequence'?' selected':''}>Sequence composition</option>
             <option value="length"${row.calcModeOverride==='length'?' selected':''}>Length only</option>
           </select>` : `<span class="calc-mode-forced" title="Saved parts only record a length, so the exact sequence-composition method isn't available">Length only</span>`}
@@ -436,12 +581,13 @@ function init() {
 
   function computeAssembly(asm){
     const rows = [];
-    const accRow = buildRow(asm.acceptor, state.accFmol, 'Acceptor');
+    const fm = fmolCurrent();
+    const accRow = buildRow(asm.acceptor, fm.acc, 'Acceptor');
     accRow.cat = 'Acceptor Vector';
     accRow.key = 'acceptor';
     rows.push(accRow);
     asm.inserts.forEach((ins, i) => {
-      const r = buildRow(ins, state.insFmol, 'Insert ' + (i+1));
+      const r = buildRow(ins, fm.ins, 'Insert ' + (i+1));
       r.key = 'ins' + ins.id;
       rows.push(r);
     });
@@ -719,12 +865,8 @@ function init() {
   }
 
   function renderCyclingCaption(){
-    const el = document.getElementById('enzyme-caption');
-    if (!el) return;
     const first = state.assemblies[0];
     const enz = (first && first.acceptor.mode === 'library' && first.acceptor.part) ? first.acceptor.part.raw.enz : null;
-    el.hidden = !enz;
-    if (enz) el.textContent = `Selected acceptor uses ${enz}.`;
 
     if (enz && !state.cycling.enzymeTouched){
       const key = enzymeKeyFromName(enz);
@@ -733,6 +875,201 @@ function init() {
         applyCyclingEnzyme(key);
         renderCyclingTable();
       }
+    }
+
+    renderCyclingSuggest();
+  }
+
+  /* ============ Cycling protocol suggestion (fragment-count and time-budget based) ============ */
+  // Formats a decimal-minute duration to the nearest second, e.g. 1.2833 -> "1m 17s" -- used wherever
+  // a time-optimised step time isn't a round number of minutes.
+  function fmtMinSec(mins){
+    const totalSec = Math.round((mins || 0) * 60);
+    const m = Math.floor(totalSec / 60), s = totalSec % 60;
+    return s > 0 ? `${m}m ${s}s` : `${m} min`;
+  }
+  // Compact form for the narrow table cell, e.g. 1.2833 -> "1m17s", 5 -> "5m".
+  function fmtMinSecShort(mins){
+    const totalSec = Math.round((mins || 0) * 60);
+    const m = Math.floor(totalSec / 60), s = totalSec % 60;
+    return s > 0 ? `${m}m${s}s` : `${m}m`;
+  }
+  // Parses "1m 17s", "1m17s", "1:17", "17s", or a plain number (taken as minutes) back to decimal
+  // minutes -- the inverse of fmtMinSec/fmtMinSecShort, so the table's time cells can round-trip
+  // without forcing users to type decimals.
+  function parseMinSec(str){
+    const s = String(str || '').trim().toLowerCase();
+    if (!s) return 0;
+    let m = s.match(/^(\d+(?:\.\d+)?)\s*mi?n?s?\s*(\d+(?:\.\d+)?)?\s*s(?:ec)?s?$/);
+    if (m) return parseFloat(m[1]) + (m[2] ? parseFloat(m[2]) / 60 : 0);
+    m = s.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+    if (m) return parseFloat(m[1]) + parseFloat(m[2]) / 60;
+    m = s.match(/^(\d+(?:\.\d+)?)\s*s(?:ec)?s?$/);
+    if (m) return parseFloat(m[1]) / 60;
+    m = s.match(/^(\d+(?:\.\d+)?)\s*mi?n?s?$/);
+    if (m) return parseFloat(m[1]);
+    const n = parseFloat(s);
+    return isNaN(n) ? 0 : n;
+  }
+  function cyclingSchemeText(cycles, stepMin, digestTemp){
+    return `${cycles} cycles of ${fmtSmart(digestTemp,1)}&deg;C for ${fmtMinSec(stepMin)} and 16&deg;C for ${fmtMinSec(stepMin)}, then 60&deg;C for 5 min, then hold at 4&deg;C indefinitely.`;
+  }
+  function singleStageSchemeText(digestTemp, timeMin){
+    return `${fmtSmart(digestTemp,1)}&deg;C for ${fmtMinSec(timeMin)}, then 60&deg;C for 5 min, then hold at 4&deg;C indefinitely.`;
+  }
+  // Text for a quickScheme() result -- the only place that still deals in the single-stage/cycle
+  // "mode" distinction, since recommendedScheme() itself only ever returns a cycling scheme now.
+  function quickSchemeText(scheme, digestTemp){
+    return scheme.mode === 'single' ? singleStageSchemeText(digestTemp, scheme.time) : cyclingSchemeText(scheme.cycles, scheme.stepMin, digestTemp);
+  }
+  function cyclingEnzymeLabel(){
+    const e = CYCLING_ENZYMES.find(x => x.key === state.cycling.enzyme);
+    return e ? e.label : 'the selected enzyme';
+  }
+  // Regenerates the applied-summary text for the "static" kinds (recommended/overnight/quick), all of
+  // which name the current enzyme -- called whenever the enzyme selection changes so the text at the
+  // top of the box stays in sync. Time-fill summaries are custom-worded per result and left alone.
+  function buildAppliedSummaryText(kind){
+    const fragCount = maxFragmentCount();
+    if (kind === 'recommended') return `Recommended for ${fragCount} fragment${fragCount===1?'':'s'} with ${cyclingEnzymeLabel()}.`;
+    if (kind === 'overnight') return `Overnight for ${fragCount} fragment${fragCount===1?'':'s'} with ${cyclingEnzymeLabel()}.`;
+    if (kind === 'quick') return `Quick protocol for ${cyclingEnzymeLabel()}.`;
+    return null;
+  }
+  function applyAutoRecommended(){
+    const fragCount = maxFragmentCount();
+    const scheme = recommendedScheme(maxInsertCount());
+    applySchemeToBlocks(scheme.cycles, scheme.stepMin);
+    state.cycling.autoFragCount = fragCount;
+    state.cycling.timeWarning = null;
+    state.cycling.summaryKind = 'recommended';
+    state.cycling.appliedSummary = buildAppliedSummaryText('recommended');
+  }
+  function renderCyclingSuggest(){
+    const el = document.getElementById('cycling-suggest');
+    if (!el) return;
+
+    // Auto mode keeps the recommended protocol applied and in sync as the fragment count changes,
+    // without the user needing to click anything -- mirrors the enzyme auto-sync elsewhere.
+    if (state.cycling.protocolMode === 'auto' && state.cycling.autoFragCount !== maxFragmentCount()){
+      applyAutoRecommended();
+      renderCyclingTable();
+    }
+    const digestTemp = state.cycling.blocks[0].steps[0].temp;
+    const fragCount = maxFragmentCount();
+    const activeMode = state.cycling.activeMode;
+
+    // The applied protocol and its action buttons stay visible at all times now -- pressing Time-
+    // optimise/Overnight/single-stage just updates the applied text in place rather than swapping to
+    // a separate panel that has to be reopened. All 3 buttons are always present, with the active one
+    // highlighted so it's clear which protocol is currently applied.
+    let html = `<div class="cyc-suggest-box cyc-applied-box">
+      <p class="cyc-suggest-line">${state.cycling.appliedSummary}</p>
+      <div class="cyc-suggest-actions">
+        <button type="button" class="btn-suggest btn-suggest-alt${activeMode==='recommended'?' btn-suggest-active':''}" id="cyc-apply-recommended">Recommended</button>
+        <button type="button" class="btn-suggest btn-suggest-alt${activeMode==='overnight'?' btn-suggest-active':''}" id="cyc-suggest-overnight">Overnight</button>
+        <button type="button" class="btn-suggest btn-suggest-alt${activeMode==='time'?' btn-suggest-active':''}" id="cyc-toggle-time">Time-optimise</button>
+      </div>`;
+
+    if (activeMode === 'time'){
+      html += `<div class="cyc-time-box">
+        <p class="field-label">Fill the time available before transformation</p>
+        <div class="cyc-time-row">
+          <label class="mm-field-inline">Hours
+            <input type="text" inputmode="decimal" id="cyc-time-hours" value="${escapeHtml(state.cycling.timeBudgetHours||'')}" placeholder="0">
+          </label>
+          <label class="mm-field-inline">Minutes
+            <input type="text" inputmode="decimal" id="cyc-time-minutes" value="${escapeHtml(state.cycling.timeBudgetMinutes||'')}" placeholder="0">
+          </label>
+          <button type="button" class="btn-suggest" id="cyc-suggest-time">Optimise</button>
+        </div>
+        <p id="cyc-time-result" class="note" hidden></p>
+        ${state.cycling.timeWarning ? `<div class="warning cyc-time-warning">
+          <p>${state.cycling.timeWarning}</p>
+          <button type="button" class="btn-suggest btn-suggest-alt cyc-time-warning-btn${state.cycling.summaryKind==='quick'?' btn-suggest-active':''}" id="cyc-apply-quick">${state.cycling.summaryKind==='quick'?'Quick protocol applied':'Use quick protocol'}</button>
+        </div>` : ''}
+      </div>`;
+    }
+
+    html += `</div>`;
+
+    el.innerHTML = html;
+
+    // Reads the current (pre-filled or user-edited) time budget, computes the fill-time suggestion,
+    // and applies it -- shared by the Time-optimise toggle (so opening/returning to the panel
+    // auto-calculates against whatever time is already entered) and the Optimise button itself.
+    function runTimeOptimise(){
+      const hours = parseFloat(state.cycling.timeBudgetHours) || 0;
+      const minutes = parseFloat(state.cycling.timeBudgetMinutes) || 0;
+      const totalMinutes = hours * 60 + minutes;
+      if (totalMinutes <= 0) return false;
+      const suggestion = suggestFillTime(totalMinutes, digestTemp, fragCount);
+      applySchemeToBlocks(suggestion.cycles, suggestion.stepMin);
+      state.cycling.protocolMode = 'manual';
+      state.cycling.activeMode = 'time';
+      state.cycling.summaryKind = 'time';
+      const quick = quickScheme(digestTemp);
+      state.cycling.appliedSummary = `Time-optimised for ${fmtDuration(totalMinutes)} available (~${fmtDuration(suggestion.minutes)} total).`;
+      state.cycling.timeWarning = suggestion.belowMinimum
+        ? `Not enough time for the standard 30-cycle protocol (30 &times; 1 min needs ~${fmtDuration(estimateTotalMinutes(30,1,digestTemp))}) &mdash; scaled down below (~${fmtDuration(suggestion.minutes)}, doesn't fit ${fmtDuration(totalMinutes)}). Efficiency and accuracy will likely be reduced &mdash; see the efficiency/accuracy graph below. Consider the quicker protocol instead: ${quickSchemeText(quick, digestTemp)}`
+        : null;
+      return true;
+    }
+
+    el.querySelector('#cyc-toggle-time').addEventListener('click', () => {
+      const wasAlreadyTime = state.cycling.activeMode === 'time';
+      state.cycling.activeMode = 'time';
+      if (!wasAlreadyTime) runTimeOptimise();
+      renderCyclingSuggest();
+      renderCyclingTable();
+    });
+
+    el.querySelector('#cyc-apply-recommended').addEventListener('click', () => {
+      state.cycling.protocolMode = 'auto';
+      state.cycling.activeMode = 'recommended';
+      applyAutoRecommended();
+      renderCyclingSuggest();
+      renderCyclingTable();
+    });
+
+    const quickBtn = el.querySelector('#cyc-apply-quick');
+    if (quickBtn){
+      quickBtn.addEventListener('click', () => {
+        const quick = quickScheme(digestTemp);
+        applyQuickScheme(quick, digestTemp);
+        state.cycling.protocolMode = 'manual';
+        state.cycling.summaryKind = 'quick';
+        state.cycling.appliedSummary = buildAppliedSummaryText('quick');
+        renderCyclingSuggest();
+        renderCyclingTable();
+      });
+    }
+
+    el.querySelector('#cyc-suggest-overnight').addEventListener('click', () => {
+      applySchemeToBlocks(40, 5);
+      state.cycling.protocolMode = 'manual';
+      state.cycling.activeMode = 'overnight';
+      state.cycling.summaryKind = 'overnight';
+      state.cycling.timeWarning = null;
+      state.cycling.appliedSummary = buildAppliedSummaryText('overnight');
+      renderCyclingSuggest();
+      renderCyclingTable();
+    });
+
+    if (activeMode === 'time'){
+      el.querySelector('#cyc-time-hours').addEventListener('input', e => { state.cycling.timeBudgetHours = e.target.value; });
+      el.querySelector('#cyc-time-minutes').addEventListener('input', e => { state.cycling.timeBudgetMinutes = e.target.value; });
+      el.querySelector('#cyc-suggest-time').addEventListener('click', () => {
+        const resultEl = el.querySelector('#cyc-time-result');
+        if (!runTimeOptimise()){
+          resultEl.hidden = false;
+          resultEl.textContent = 'Enter the time you have available.';
+          return;
+        }
+        resultEl.hidden = true;
+        renderCyclingSuggest();
+        renderCyclingTable();
+      });
     }
   }
 
@@ -770,43 +1107,76 @@ function init() {
       <span class="cycling-total-value">~${fmtDuration(cyclingTotalMinutes())}</span>
       <span class="cycling-total-sub">assumes a ${fmtSmart(state.cycling.rampRate)}&deg;C/sec block ramp rate plus ${fmtSmart(state.cycling.heatupMin)} min initial heat-up. Rough estimate only; actual cyclers vary.</span>`;
   }
-  function renderCyclingTable(){
-    const wrap = document.getElementById('cycling-table-wrap');
-    if (!wrap) return;
-    let html = `<label class="cycling-enzyme-field">
+  function renderCyclingEnzymeSelect(){
+    const el = document.getElementById('cycling-enzyme-select');
+    if (!el) return;
+    el.innerHTML = `<label class="cycling-enzyme-field">
       <span>Restriction enzyme</span>
       <select id="in-cyclingEnzyme">
         ${CYCLING_ENZYMES.map(e => `<option value="${e.key}"${state.cycling.enzyme===e.key?' selected':''}>${escapeHtml(e.label)}</option>`).join('')}
       </select>
     </label>`;
-    html += `<table class="cycling-table">
-      <colgroup><col><col class="col-temp"><col class="col-time"><col class="col-cyc"></colgroup>
-      <thead><tr><th>Step</th><th>Temp</th><th>Min</th><th>&times;</th></tr></thead><tbody>`;
-    state.cycling.blocks.forEach((block, bi) => {
-      block.steps.forEach((step, si) => {
-        html += `<tr>
-          <td>${escapeHtml(step.name)}</td>
-          <td class="cyc-temp-static">${fmtSmart(step.temp,1)}&deg;</td>
-          <td><input type="text" inputmode="decimal" class="cyc-input cyc-time" data-block="${bi}" data-step="${si}" value="${step.time}"></td>
-          ${si===0 ? `<td${block.steps.length>1?` rowspan="${block.steps.length}"`:''}><input type="text" inputmode="numeric" class="cyc-input cyc-cycles" data-block="${bi}" value="${block.cycles}"></td>` : ''}
-        </tr>`;
-      });
-    });
-    html += `</tbody></table>`;
-    wrap.innerHTML = html;
-
-    wrap.querySelector('#in-cyclingEnzyme').addEventListener('change', e => {
+    el.querySelector('#in-cyclingEnzyme').addEventListener('change', e => {
       state.cycling.enzyme = e.target.value;
       state.cycling.enzymeTouched = true;
       applyCyclingEnzyme(state.cycling.enzyme);
+      // The applied-summary text names the enzyme, so keep it in sync for the "static" kinds.
+      const regenerated = buildAppliedSummaryText(state.cycling.summaryKind);
+      if (regenerated) state.cycling.appliedSummary = regenerated;
       renderCyclingTable();
+      renderCyclingSuggest();
     });
-    wrap.querySelectorAll('.cyc-time').forEach(inp => inp.addEventListener('input', e => {
-      state.cycling.blocks[+e.target.dataset.block].steps[+e.target.dataset.step].time = parseFloat(e.target.value) || 0;
-      updateCyclingTotal();
-    }));
+  }
+  function renderCyclingTable(){
+    const wrap = document.getElementById('cycling-table-wrap');
+    if (!wrap) return;
+    renderCyclingEnzymeSelect();
+    let html = `<table class="cycling-table">
+      <colgroup><col><col class="col-temp"><col class="col-time"><col class="col-cyc"></colgroup>
+      <thead><tr><th>Step</th><th>Temp</th><th>Time</th><th>&times;</th></tr></thead><tbody>`;
+    // The hold block (always the last one, 4°C) isn't user-editable -- it's hardcoded to run
+    // indefinitely rather than for a set number of minutes, so it's shown as a fixed row below
+    // instead of with editable inputs.
+    const cyclableBlocks = state.cycling.blocks.filter(block => block.steps[0].name !== 'Hold');
+    cyclableBlocks.forEach((block) => {
+      const bi = state.cycling.blocks.indexOf(block);
+      block.steps.forEach((step, si) => {
+        // Flag a hot (42°C) digestion temp in red -- it's the one enzyme-dependent difference in the
+        // schedule worth calling out at a glance (e.g. BspQI/BsmBI-v2 vs the more common 37°C enzymes).
+        const isHotDigestion = step.name === 'Digestion' && step.temp >= 40;
+        html += `<tr>
+          <td>${escapeHtml(step.name)}</td>
+          <td class="cyc-temp-static${isHotDigestion ? ' cyc-temp-hot' : ''}">${fmtSmart(step.temp,1)}&deg;</td>
+          <td><input type="text" class="cyc-input cyc-time" data-block="${bi}" data-step="${si}" value="${fmtMinSecShort(step.time)}"></td>
+          ${si===0 ? (block.steps.length>1
+            ? `<td rowspan="${block.steps.length}"><input type="text" inputmode="numeric" class="cyc-input cyc-cycles" data-block="${bi}" value="${block.cycles}"></td>`
+            : `<td class="cyc-temp-static">${block.cycles}</td>`) : ''}
+        </tr>`;
+      });
+    });
+    html += `<tr class="cyc-hold-row"><td>Hold <span class="cyc-hold-flag">see warning</span></td><td class="cyc-temp-static">4&deg;</td><td colspan="2" class="cyc-hold-indefinite">Indefinite</td></tr>`;
+    html += `</tbody></table>`;
+    wrap.innerHTML = html;
+
+    const holdWarningEl = document.getElementById('cycling-hold-warning');
+    if (holdWarningEl){
+      holdWarningEl.innerHTML = `<p class="warning cyc-hold-note">Held at 4&deg;C until you're ready to transform. If held for a long period (e.g. overnight), <strong>repeat the final 60&deg;C for 5 min digestion step</strong> immediately before transformation to fully digest any fragments re-ligated during the hold.</p>`;
+    }
+
+    wrap.querySelectorAll('.cyc-time').forEach(inp => {
+      inp.addEventListener('input', e => {
+        state.cycling.blocks[+e.target.dataset.block].steps[+e.target.dataset.step].time = parseMinSec(e.target.value);
+        state.cycling.protocolMode = 'manual';   // stop auto-syncing to the tier once the user hand-edits a step
+        updateCyclingTotal();
+      });
+      // Reformat to the compact "1m17s" form once the user's done typing, rather than on every keystroke.
+      inp.addEventListener('blur', e => {
+        e.target.value = fmtMinSecShort(state.cycling.blocks[+e.target.dataset.block].steps[+e.target.dataset.step].time);
+      });
+    });
     wrap.querySelectorAll('.cyc-cycles').forEach(inp => inp.addEventListener('input', e => {
       state.cycling.blocks[+e.target.dataset.block].cycles = Math.max(1, parseInt(e.target.value, 10) || 1);
+      state.cycling.protocolMode = 'manual';
       updateCyclingTotal();
     }));
 
@@ -814,6 +1184,8 @@ function init() {
   }
 
   function renderAll(){
+    syncSetupFields();
+    renderMasterMixSettings();
     renderAssemblies();
     renderMasterMixBatch();
   }
@@ -890,9 +1262,9 @@ function init() {
   document.getElementById('download-csv-btn').addEventListener('click', downloadCsv);
 
   /* ============ Master mix settings (Global conditions) ============ */
-  function mmFieldRow(key, label, value, showReset, defaultHint){
+  function mmFieldRow(key, label, value, showReset, defaultHint, unitNote){
     return `<label class="mm-field">
-      <span>${label} <span class="unit">&micro;L</span></span>
+      <span>${label} <span class="unit">&micro;L${unitNote ? `, ${unitNote}` : ''}</span></span>
       <div class="mm-field-input">
         <input type="text" inputmode="decimal" data-mm="${key}" value="${roundStr(value,3)}">
         ${defaultHint ? `<button type="button" class="reset-link" data-mm-reset="${key}"${showReset?'':' hidden'}>reset (${defaultHint})</button>` : ''}
@@ -929,8 +1301,9 @@ function init() {
       html += mmFieldRow('bufferA', 'Buffer &ndash; Part A', cur.bufferA, false, null);
       html += mmFieldRow('bufferB', 'Buffer &ndash; Part B', cur.bufferB, false, null);
     }
-    html += mmFieldRow('ligase', 'T4 DNA ligase', cur.ligase, state.mm.ligaseTouched, 'vol&divide;40');
-    html += mmFieldRow('enzyme', 'Restriction enzyme', cur.enzyme, state.mm.enzymeTouched, 'vol&divide;20');
+    const d = mmDefaults();
+    html += mmFieldRow('ligase', 'T4 DNA ligase', cur.ligase, state.mm.ligaseTouched, roundStr(d.ligase,3), 'assuming 400,000 U/mL');
+    html += mmFieldRow('enzyme', 'Restriction enzyme', cur.enzyme, state.mm.enzymeTouched, roundStr(d.enzyme,3));
     c.innerHTML = html;
 
     c.querySelectorAll('input[name="bufferType"]').forEach(r => r.addEventListener('change', e => {
@@ -944,8 +1317,26 @@ function init() {
   }
 
   /* ============ Setup field wiring ============ */
-  document.getElementById('in-accFmol').addEventListener('input', e => { state.accFmol = parseFloat(e.target.value)||0; refreshAllResults(); });
-  document.getElementById('in-insFmol').addEventListener('input', e => { state.insFmol = parseFloat(e.target.value)||0; refreshAllResults(); });
+  // Acceptor/insert fmol targets default from the insert-count tier (see fmolCurrent()) until the
+  // user edits them directly; syncSetupFields() keeps the displayed value/reset-button in step with
+  // the tier as assemblies are added, removed, or resized.
+  function syncSetupFields(){
+    const d = fmolDefaults();
+    const accInput = document.getElementById('in-accFmol');
+    const insInput = document.getElementById('in-insFmol');
+    const accReset = document.getElementById('reset-accFmol');
+    const insReset = document.getElementById('reset-insFmol');
+    if (!state.accFmolTouched) accInput.value = d.acc;
+    if (!state.insFmolTouched) insInput.value = d.ins;
+    accReset.hidden = !state.accFmolTouched;
+    insReset.hidden = !state.insFmolTouched;
+    accReset.textContent = `reset (${d.acc})`;
+    insReset.textContent = `reset (${d.ins})`;
+  }
+  document.getElementById('in-accFmol').addEventListener('input', e => { state.accFmol = parseFloat(e.target.value)||0; state.accFmolTouched = true; syncSetupFields(); refreshAllResults(); });
+  document.getElementById('in-insFmol').addEventListener('input', e => { state.insFmol = parseFloat(e.target.value)||0; state.insFmolTouched = true; syncSetupFields(); refreshAllResults(); });
+  document.getElementById('reset-accFmol').addEventListener('click', () => { state.accFmolTouched = false; syncSetupFields(); refreshAllResults(); });
+  document.getElementById('reset-insFmol').addEventListener('click', () => { state.insFmolTouched = false; syncSetupFields(); refreshAllResults(); });
   document.getElementById('in-totalVol').addEventListener('input', e => {
     state.totalVol = parseFloat(e.target.value)||0;
     renderMasterMixSettings();
@@ -963,13 +1354,10 @@ function init() {
     renderAll();
   });
 
-  document.getElementById('in-rampRate').addEventListener('input', e => { state.cycling.rampRate = parseFloat(e.target.value)||0; updateCyclingTotal(); });
-  document.getElementById('in-heatup').addEventListener('input', e => { state.cycling.heatupMin = parseFloat(e.target.value)||0; updateCyclingTotal(); });
-
   document.getElementById('clear-page-btn').addEventListener('click', () => {
     if (!confirm('Clear everything and start a new page? This cannot be undone.')) return;
-    state.accFmol = 25;
-    state.insFmol = 50;
+    state.accFmol = 25; state.accFmolTouched = false;
+    state.insFmol = 50; state.insFmolTouched = false;
     state.totalVol = 10;
     state.calcMode = 'sequence';
     state.mm = {
@@ -984,13 +1372,9 @@ function init() {
     state.assemblies = [ mkAssembly() ];
     state.cycling = defaultCycling();
 
-    document.getElementById('in-accFmol').value = state.accFmol;
-    document.getElementById('in-insFmol').value = state.insFmol;
     document.getElementById('in-totalVol').value = state.totalVol;
     document.getElementById('in-mmEnabled').checked = state.mm.enabled;
     document.querySelector('input[name="calcMode"][value="sequence"]').checked = true;
-    document.getElementById('in-rampRate').value = state.cycling.rampRate;
-    document.getElementById('in-heatup').value = state.cycling.heatupMin;
 
     renderMasterMixSettings();
     renderCyclingTable();

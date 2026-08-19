@@ -91,12 +91,16 @@
     .calc-side{ position:static; }
   }
 
-  .setup-fields{ display:flex; flex-wrap:wrap; gap:16px; }
+  .setup-fields{ display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; }
   .setup-fields label{
     display:flex; flex-direction:column; gap:5px; font-size:12.5px; color:var(--ink-soft); font-weight:500;
-    flex:1 1 140px;
+    min-width:0;
   }
-  .setup-fields input{ font-family:var(--font-mono); font-size:15px; }
+  .setup-fields input{ font-family:var(--font-mono); font-size:15px; width:100%; }
+  .setup-fields .reset-link{ align-self:flex-start; }
+  @media (max-width: 420px){
+    .setup-fields{ grid-template-columns: 1fr; }
+  }
   .unit{ font-family:var(--font-mono); color:var(--ink-faint); font-weight:400; font-size:11px; }
 
   input[type=number], input[type=text], input[type=search], textarea{
@@ -221,8 +225,8 @@
   .mode-btn.active{ background:var(--ink); color:#fff; }
 
   .calc-mode-select{
-    font-family:var(--font-mono); font-size:10.5px; padding:4px 6px; border:1px solid var(--line-strong);
-    border-radius:6px; background:#fff; color:var(--ink-soft); max-width:150px;
+    font-family:var(--font-mono); font-size:10.5px; padding:4px 20px 4px 6px; border:1px solid var(--line-strong);
+    border-radius:6px; background:#fff; color:var(--ink-soft); max-width:190px;
   }
   .calc-mode-forced{
     font-family:var(--font-mono); font-size:10.5px; padding:4px 8px; border:1px dashed var(--line-strong);
@@ -266,7 +270,44 @@
     margin:12px 0 0; padding:10px 12px; border-radius:7px; background:var(--warn-bg); color:var(--warn);
     font-size:12.5px; line-height:1.45;
   }
+  .cyc-time-warning p{ margin:0 0 10px; }
+  .cyc-time-warning-btn{
+    border-color:var(--warn); background:transparent; color:var(--warn);
+  }
+  .cyc-time-warning-btn:hover{ background:var(--warn); color:#fff; }
   .note{ margin:10px 0 0; font-size:12px; color:var(--ink-faint); line-height:1.5; }
+
+  .cyc-suggest-box{
+    padding:10px 12px; border-radius:7px; background:var(--accent-bg); border:1px solid var(--accent); margin-bottom:10px;
+  }
+  .cyc-suggest-line{
+    margin:0 0 6px; font-size:12.5px; color:var(--ink); line-height:1.45;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .cyc-suggest-line:last-of-type{ margin-bottom:8px; }
+  .cyc-suggest-actions{ display:flex; flex-wrap:wrap; gap:6px; }
+  .cyc-suggest-actions .btn-suggest{
+    flex:1 1 0; min-width:0; padding:6px 6px; font-size:11.5px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .cyc-time-box{
+    margin-top:10px; padding-top:10px; border-top:1px solid var(--accent);
+  }
+  .cyc-time-row{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+  .cyc-time-row .mm-field-inline input{
+    width:52px; height:32px; padding:0 8px; font-size:12.5px; box-sizing:border-box;
+  }
+  .cyc-time-row .btn-suggest{ height:32px; padding:0 14px; display:inline-flex; align-items:center; }
+  .btn-suggest{
+    font-family:var(--font-ui); font-size:12px; font-weight:600; padding:6px 12px; border-radius:6px;
+    border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer;
+    text-align:center;
+  }
+  .btn-suggest:hover{ background:var(--accent-ink); border-color:var(--accent-ink); }
+  .btn-suggest-alt{ background:transparent; color:var(--accent-ink); }
+  .btn-suggest-alt:hover{ background:var(--accent-bg); }
+  .btn-suggest-alt.btn-suggest-active{ background:var(--accent); color:#fff; }
+  .btn-suggest-alt.btn-suggest-active:hover{ background:var(--accent-ink); }
 
   .cycling-enzyme-field{
     display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; font-size:12.5px; color:var(--ink-soft);
@@ -277,9 +318,9 @@
   }
 
   .cycling-table{ width:100%; border-collapse:collapse; table-layout:fixed; font-size:12.5px; margin-top:4px; }
-  .cycling-table col.col-temp{ width:42px; }
-  .cycling-table col.col-time{ width:48px; }
-  .cycling-table col.col-cyc{ width:52px; }
+  .cycling-table col.col-temp{ width:38px; }
+  .cycling-table col.col-time{ width:74px; }
+  .cycling-table col.col-cyc{ width:56px; }
   .cycling-table th{
     font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em;
     color:var(--ink-faint); font-weight:500; text-align:left; padding:5px 4px; border-bottom:1px solid var(--line-strong);
@@ -288,6 +329,13 @@
   .cycling-table td{ font-family:var(--font-mono); padding:5px 4px; border-bottom:1px solid var(--line); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .cycling-table tr:last-child td{ border-bottom:none; }
   .cyc-temp-static{ text-align:right; color:var(--ink-soft); }
+  .cyc-temp-hot{ color:var(--warn); font-weight:600; }
+  .cyc-hold-row td{ color:var(--ink-soft); }
+  .cyc-hold-indefinite{ text-align:right; font-style:italic; }
+  .cyc-hold-flag{ font-style:italic; font-size:11px; color:var(--warn); margin-left:5px; }
+  .cyc-hold-note{
+    margin-top:12px; border:1px solid var(--warn); border-left-width:4px; font-weight:500;
+  }
   .cyc-input{
     font-family:var(--font-mono); font-size:12px; padding:3px 3px; border:1px solid var(--line-strong);
     border-radius:5px; background:#fff; text-align:right; width:100%; min-width:0; box-sizing:border-box;
@@ -305,6 +353,9 @@
 
   /* ---------- Cycling evidence charts (efficiency/accuracy vs. cycle count) ---------- */
   .cyc-evidence{ margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+  .cyc-evidence > summary{ cursor:pointer; display:list-item; }
+  .cyc-evidence > summary::marker{ color:var(--ink-faint); }
+  .cyc-evidence:not([open]) > summary{ margin-bottom:0; }
   .cyc-chart-title{ font-size:12px; color:var(--ink-soft); font-weight:500; margin:12px 0 2px; }
   .cyc-chart-title:first-of-type{ margin-top:4px; }
   .cyc-chart-title .unit{ font-weight:400; color:var(--ink-faint); }
@@ -336,7 +387,6 @@
   .cyc-data-table td{ padding:4px 6px; border-bottom:1px solid var(--line); font-family:var(--font-mono); }
   .cyc-data-table tr:last-child td{ border-bottom:none; }
 
-  .cycling-settings{ display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; }
   .mm-field-inline{ display:flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-soft); }
   .mm-field-inline input{ width:48px; font-family:var(--font-mono); text-align:right; }
 

@@ -61,10 +61,12 @@
             <h2>Global conditions</h2>
             <div class="setup-fields">
               <label>Acceptor target <span class="unit">FMOL</span>
-                <input type="number" id="in-accFmol" value="25" min="0" step="any">
+                <input type="number" id="in-accFmol" value="10" min="0" step="any">
+                <button type="button" class="reset-link" id="reset-accFmol" hidden>reset</button>
               </label>
               <label>Insert target (each) <span class="unit">FMOL</span>
-                <input type="number" id="in-insFmol" value="50" min="0" step="any">
+                <input type="number" id="in-insFmol" value="20" min="0" step="any">
+                <button type="button" class="reset-link" id="reset-insFmol" hidden>reset</button>
               </label>
               <label>Reaction volume <span class="unit">&micro;L</span>
                 <input type="number" id="in-totalVol" value="10" min="0" step="any">
@@ -85,21 +87,15 @@
 
           <div class="card">
             <h2>Recommended cycling</h2>
-            <p id="enzyme-caption" class="note" hidden></p>
+            <div id="cycling-enzyme-select"></div>
+            <div id="cycling-suggest"></div>
             <div id="cycling-table-wrap"></div>
             <div class="cycling-total-box" id="cycling-total"></div>
-            <div class="cycling-settings">
-              <label class="mm-field-inline">Ramp rate <span class="unit">&deg;C/sec</span>
-                <input type="text" inputmode="decimal" id="in-rampRate" value="3">
-              </label>
-              <label class="mm-field-inline">Initial heat-up <span class="unit">min</span>
-                <input type="text" inputmode="decimal" id="in-heatup" value="5">
-              </label>
-            </div>
-            <p class="note">Temperatures follow the selected enzyme's recommended settings; times and cycle counts are editable.</p>
+            <div id="cycling-hold-warning"></div>
+            <p class="note">Temperatures follow the selected enzyme's recommended settings; times and cycle counts are editable. The final hold is fixed at 4&deg;C indefinitely. Estimated run time assumes a 3&deg;C/sec block ramp rate and a 5 min initial heat-up.</p>
 
-            <div class="cyc-evidence">
-              <p class="field-label">Why 20&ndash;30 cycles is often enough</p>
+            <details class="cyc-evidence">
+              <summary class="field-label">Why 20&ndash;30 cycles is often enough</summary>
 
               <p class="cyc-chart-title">Efficiency <span class="unit">blue colonies / 100&nbsp;&micro;l outgrowth</span></p>
               <svg class="cyc-chart" viewBox="0 0 320 150" role="img" aria-label="Line chart: assembly efficiency rises from 0 to about 146 blue colonies as cycle count increases from 0 to 60 cycles, with no plateau.">
@@ -170,7 +166,7 @@
                   </tbody>
                 </table>
               </details>
-            </div>
+            </details>
           </div>
         </aside>
       </div>
@@ -213,7 +209,7 @@
   </main>
 
   <footer class="site-footer">
-    <p>Volumes default to using actual base composition (A/C/G/T molecular weights); switch to length-only mode above to use the average bp weight instead. Master-mix volumes default to 1/10 (buffer), 1/40 (ligase) and 1/20 (restriction enzyme) of the reaction volume but can be edited &mdash; water makes up the remainder. Nothing you enter here leaves your browser.</p>
+    <p>Volumes default to using actual base composition (A/C/G/T molecular weights); switch to length-only mode above to use the average bp weight instead. Master-mix buffer defaults to 1/10 of the reaction volume; ligase and restriction enzyme default to 0.5/0.3&nbsp;&micro;L (1 insert), 1/0.6&nbsp;&micro;L (2&ndash;6 inserts) or 2/1.2&nbsp;&micro;L (7+ inserts) &mdash; all editable, with water making up the remainder. Nothing you enter here leaves your browser.</p>
   </footer>
 </div>
 
