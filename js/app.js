@@ -101,6 +101,10 @@ function init() {
   PARTS.forEach(p => INSERTABLE.push({ kind:'part', raw:p, cat:(p.t||'').trim() }));
   LINKERS.forEach(l => INSERTABLE.push({ kind:'linker', raw:l, cat:(l.t||'').trim() }));
 
+  /* ============ Combined searchable acceptor list ============ */
+  const ACCEPTABLE = [];
+  ACCEPT.forEach(a => ACCEPTABLE.push({ kind:'acceptor', raw:a, cat:'Acceptor Vector' }));
+
   /* ============ App state ============ */
   let uidCounter = 1;
   function mkInsert(mode){ return { id:'ins'+(uidCounter++), mode: mode||'custom', part:null, cat:null, conc:'', customName:'', customSeq:'', customLen:'', calcModeOverride:null }; }
@@ -156,6 +160,24 @@ function init() {
     cycling: defaultCycling(),  // rampRate (deg C/sec, rough estimate) + heatupMin + editable step/cycle blocks
     userParts: loadUserParts(),  // [{id, n:name, note:description, len:bp}], no sequence
   };
+  // uidCounter starts fresh at 1 each page load, but userParts persist across sessions with ids
+  // already minted from a previous counter -- without this, a newly-added part can be assigned an
+  // id ("up1", "up2", ...) that collides with an existing saved part, so id-keyed lookups
+  // (Use/Delete/role change) silently act on the wrong (first-matching) entry.
+  state.userParts.forEach(up => {
+    const m = /^up(\d+)$/.exec(up.id || '');
+    if (m) uidCounter = Math.max(uidCounter, parseInt(m[1], 10) + 1);
+  });
+  // Repair any parts already saved with colliding ids from that bug (keep the first, renumber the rest).
+  {
+    const seenIds = new Set();
+    let repaired = false;
+    state.userParts.forEach(up => {
+      if (seenIds.has(up.id)){ up.id = 'up'+(uidCounter++); repaired = true; }
+      seenIds.add(up.id);
+    });
+    if (repaired) saveUserParts();
+  }
   // Recommended digestion temperatures per Type IIS enzyme (NEB Golden Gate guidance).
   // Ligation always runs at 16°C (T4 ligase) regardless of the restriction enzyme, so it isn't listed here.
   // The final digestion step (60°C, 5 min) and hold (4°C) are the same for every enzyme.
@@ -693,7 +715,7 @@ function init() {
       const accWrap = document.createElement('div');
       accWrap.className = 'part-row part-row-acceptor';
       body.appendChild(accWrap);
-      renderPartRow(accWrap, asm.acceptor, { label:'Acceptor', items: ACCEPT.map(a => ({ kind:'acceptor', raw:a, cat:'Acceptor Vector' })), onRemove:null });
+      renderPartRow(accWrap, asm.acceptor, { label:'Acceptor', items: ACCEPTABLE, onRemove:null });
 
       const insertsHeader = document.createElement('div');
       insertsHeader.className = 'assembly-subhead';
@@ -1412,10 +1434,12 @@ function init() {
   // user's saved parts; rebuilt wholesale on every add/delete rather than tracked incrementally.
   function syncUserPartsIntoLists(){
     for (let i = INSERTABLE.length - 1; i >= 0; i--) if (INSERTABLE[i].kind === 'user') INSERTABLE.splice(i, 1);
+    for (let i = ACCEPTABLE.length - 1; i >= 0; i--) if (ACCEPTABLE[i].kind === 'user') ACCEPTABLE.splice(i, 1);
     for (let i = ALL_DB.length - 1; i >= 0; i--) if (ALL_DB[i].kind === 'user') ALL_DB.splice(i, 1);
     state.userParts.forEach(up => {
-      const raw = { id: up.id, n: up.n, note: up.note, len: up.len };
+      const raw = { id: up.id, n: up.n, note: up.note, len: up.len, role: up.role === 'acceptor' ? 'acceptor' : 'insert' };
       INSERTABLE.push({ kind:'user', raw, cat:'My Parts' });
+      ACCEPTABLE.push({ kind:'user', raw, cat:'My Parts' });
       ALL_DB.push({ kind:'user', raw, name: up.n, cat:'My Parts', len: up.len, details: up.note || '' });
     });
   }
@@ -1429,6 +1453,25 @@ function init() {
     wrap.querySelectorAll('.filter-chip').forEach(chip => {
       chip.addEventListener('click', () => { dbActiveFilter = chip.dataset.cat; renderDbTable(); });
     });
+  }
+
+  // Sends a library/saved-part entry (d: {kind, raw, cat}) to the last assembly, as the acceptor
+  // or as a new insert depending on kind/role, then jumps to the Calculator tab.
+  function useLibraryItem(d){
+    if (!state.assemblies.length) state.assemblies.push(mkAssembly());
+    const asm = state.assemblies[state.assemblies.length-1];
+    const useAsAcceptor = d.kind === 'acceptor' || (d.kind === 'user' && d.raw.role === 'acceptor');
+    if (useAsAcceptor){
+      asm.acceptor = { mode:'library', part:{kind:d.kind, raw:d.raw, cat: d.kind==='user' ? 'My Parts' : 'Acceptor Vector'}, conc:'', customName:'', customSeq:'', customLen:'' };
+    } else {
+      const ins = mkInsert();
+      ins.mode = 'library';
+      ins.part = { kind:d.kind, raw:d.raw, cat:d.cat };
+      asm.inserts.push(ins);
+    }
+    asm.collapsed = false;
+    renderAll();
+    document.querySelector('.tab-btn[data-tab="calc"]').click();
   }
 
   function renderDbTable(){
@@ -1452,19 +1495,7 @@ function init() {
       navigator.clipboard.writeText(d.raw.s).then(() => { b.textContent='Copied'; setTimeout(()=>b.textContent='Copy seq',1200); });
     }));
     tbody.querySelectorAll('[data-use]').forEach(b => b.addEventListener('click', () => {
-      const d = rows[+b.dataset.use];
-      if (!state.assemblies.length) state.assemblies.push(mkAssembly());
-      const asm = state.assemblies[state.assemblies.length-1];
-      if (d.kind === 'acceptor'){
-        asm.acceptor = { mode:'library', part:{kind:'acceptor', raw:d.raw, cat:'Acceptor Vector'}, conc:'', customName:'', customSeq:'', customLen:'' };
-      } else {
-        const ins = mkInsert();
-        ins.part = { kind:d.kind, raw:d.raw, cat:d.cat };
-        asm.inserts.push(ins);
-      }
-      asm.collapsed = false;
-      renderAll();
-      document.querySelector('.tab-btn[data-tab="calc"]').click();
+      useLibraryItem(rows[+b.dataset.use]);
     }));
 
     document.getElementById('db-count').textContent = `${rows.length} of ${ALL_DB.length} parts`;
@@ -1482,14 +1513,23 @@ function init() {
       return;
     }
     wrap.innerHTML = `<table class="db-table my-parts-table">
-      <thead><tr><th>Name</th><th>Length</th><th>Description</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Length</th><th>Description</th><th>Use as</th><th></th></tr></thead>
       <tbody>
         ${state.userParts.map(up => `
           <tr>
             <td class="dname">${escapeHtml(up.n)}</td>
             <td class="dlen mono">${up.len} bp</td>
             <td class="ddetails">${escapeHtml(up.note||'')}</td>
-            <td class="dactions"><button type="button" class="icon-btn" data-del="${escapeHtml(up.id)}">Delete</button></td>
+            <td class="drole">
+              <select class="role-select" data-role="${escapeHtml(up.id)}">
+                <option value="insert"${up.role==='acceptor'?'':' selected'}>Insert</option>
+                <option value="acceptor"${up.role==='acceptor'?' selected':''}>Acceptor vector</option>
+              </select>
+            </td>
+            <td class="dactions">
+              <button type="button" class="icon-btn" data-use="${escapeHtml(up.id)}">Use&nbsp;&rarr;</button>
+              <button type="button" class="icon-btn" data-del="${escapeHtml(up.id)}">Delete</button>
+            </td>
           </tr>`).join('')}
       </tbody>
     </table>`;
@@ -1501,9 +1541,22 @@ function init() {
       renderDbFilters();
       renderDbTable();
     }));
+    wrap.querySelectorAll('[data-role]').forEach(sel => sel.addEventListener('change', () => {
+      const up = state.userParts.find(u => u.id === sel.dataset.role);
+      if (!up) return;
+      up.role = sel.value === 'acceptor' ? 'acceptor' : 'insert';
+      saveUserParts();
+      syncUserPartsIntoLists();
+      renderDbTable();
+    }));
+    wrap.querySelectorAll('[data-use]').forEach(b => b.addEventListener('click', () => {
+      const up = state.userParts.find(u => u.id === b.dataset.use);
+      if (!up) return;
+      useLibraryItem({ kind:'user', raw:{ id: up.id, n: up.n, note: up.note, len: up.len, role: up.role === 'acceptor' ? 'acceptor' : 'insert' }, cat:'My Parts' });
+    }));
   }
   document.getElementById('mp-download-btn').addEventListener('click', () => {
-    const payload = JSON.stringify(state.userParts.map(up => ({ n: up.n, note: up.note || '', len: up.len })), null, 2);
+    const payload = JSON.stringify(state.userParts.map(up => ({ n: up.n, note: up.note || '', len: up.len, role: up.role === 'acceptor' ? 'acceptor' : 'insert' })), null, 2);
     const blob = new Blob([payload], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1512,10 +1565,10 @@ function init() {
     a.click();
     URL.revokeObjectURL(url);
   });
-  document.getElementById('mp-upload-btn').addEventListener('click', () => {
-    document.getElementById('mp-upload-input').click();
+  document.getElementById('mp-restore-btn').addEventListener('click', () => {
+    document.getElementById('mp-restore-input').click();
   });
-  document.getElementById('mp-upload-input').addEventListener('change', (e) => {
+  document.getElementById('mp-restore-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
@@ -1523,37 +1576,97 @@ function init() {
       let arr;
       try { arr = JSON.parse(text); } catch(err){ alert('That file is not valid JSON.'); return; }
       if (!Array.isArray(arr)){ alert('Expected a JSON array of parts.'); return; }
-      const existingNames = new Set(state.userParts.map(up => up.n));
-      let added = 0, skipped = 0;
-      arr.forEach(entry => {
-        const name = (entry && entry.n || '').toString().trim();
-        const len = parseInt(entry && entry.len, 10);
-        if (!name || !Number.isFinite(len) || len <= 0){ skipped++; return; }
-        if (existingNames.has(name)){ skipped++; return; }
-        state.userParts.push({ id:'up'+(uidCounter++), n:name, note:(entry.note||'').toString().trim(), len });
-        existingNames.add(name);
-        added++;
-      });
-      saveUserParts();
-      syncUserPartsIntoLists();
-      renderUserPartsList();
-      renderDbFilters();
-      renderDbTable();
+      const { added, skipped } = importUserParts(arr.map(entry => ({
+        n: entry && entry.n, note: entry && entry.note, len: entry && entry.len, role: entry && entry.role
+      })));
       if (skipped) alert(`Imported ${added} part(s). Skipped ${skipped} (invalid or already saved).`);
     });
+  });
+
+  // Bulk import from a spreadsheet export: name, description, length (bp) columns, header row optional.
+  function parseCsv(text){
+    const rows = [];
+    let row = [], field = '', inQuotes = false;
+    for (let i = 0; i < text.length; i++){
+      const c = text[i];
+      if (inQuotes){
+        if (c === '"'){
+          if (text[i+1] === '"'){ field += '"'; i++; } else { inQuotes = false; }
+        } else field += c;
+      } else if (c === '"'){
+        inQuotes = true;
+      } else if (c === ','){
+        row.push(field); field = '';
+      } else if (c === '\n' || c === '\r'){
+        if (c === '\r' && text[i+1] === '\n') i++;
+        row.push(field); field = '';
+        rows.push(row); row = [];
+      } else field += c;
+    }
+    if (field !== '' || row.length){ row.push(field); rows.push(row); }
+    return rows.filter(r => r.some(f => f.trim() !== ''));
+  }
+  function importUserParts(entries){
+    const existingNames = new Set(state.userParts.map(up => up.n));
+    let added = 0, skipped = 0;
+    entries.forEach(entry => {
+      const name = (entry && entry.n || '').toString().trim();
+      const len = parseInt(entry && entry.len, 10);
+      if (!name || !Number.isFinite(len) || len <= 0){ skipped++; return; }
+      if (existingNames.has(name)){ skipped++; return; }
+      const role = (entry && entry.role || '').toString().trim().toLowerCase() === 'acceptor' ? 'acceptor' : 'insert';
+      state.userParts.push({ id:'up'+(uidCounter++), n:name, note:((entry && entry.note)||'').toString().trim(), len, role });
+      existingNames.add(name);
+      added++;
+    });
+    saveUserParts();
+    syncUserPartsIntoLists();
+    renderUserPartsList();
+    renderDbFilters();
+    renderDbTable();
+    return { added, skipped };
+  }
+  document.getElementById('mp-csv-btn').addEventListener('click', () => {
+    document.getElementById('mp-csv-input').click();
+  });
+  document.getElementById('mp-csv-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    file.text().then(text => {
+      let rows = parseCsv(text);
+      if (!rows.length){ alert('That CSV file has no rows.'); return; }
+      // Skip an optional header row (its length column won't parse as a positive integer).
+      if (!Number.isFinite(parseInt(rows[0][2], 10)) || parseInt(rows[0][2], 10) <= 0) rows = rows.slice(1);
+      const entries = rows.map(r => ({ n: r[0], note: r[1], len: r[2], role: r[3] }));
+      const { added, skipped } = importUserParts(entries);
+      alert(`Imported ${added} part(s) from CSV.${skipped ? ` Skipped ${skipped} (invalid or already saved).` : ''}`);
+    });
+  });
+
+  // Paste a raw sequence to live-calculate its length (ignores FASTA header lines & whitespace) into the length field.
+  document.getElementById('mp-seq').addEventListener('input', (e) => {
+    const resultEl = document.getElementById('mp-seq-result');
+    const len = e.target.value.split(/\r?\n/).filter(line => !line.startsWith('>')).join('').replace(/\s/g, '').length;
+    if (!len){ resultEl.textContent = ''; return; }
+    document.getElementById('mp-len').value = len;
+    resultEl.textContent = `= ${len} bp`;
   });
   document.getElementById('mp-add-btn').addEventListener('click', () => {
     const nameEl = document.getElementById('mp-name');
     const descEl = document.getElementById('mp-desc');
     const lenEl = document.getElementById('mp-len');
+    const roleEl = document.getElementById('mp-role');
     const name = nameEl.value.trim();
     const len = parseInt(lenEl.value, 10);
     if (!name){ nameEl.focus(); return; }
     if (!Number.isFinite(len) || len <= 0){ lenEl.focus(); return; }
-    state.userParts.push({ id:'up'+(uidCounter++), n:name, note:descEl.value.trim(), len });
+    state.userParts.push({ id:'up'+(uidCounter++), n:name, note:descEl.value.trim(), len, role: roleEl.value==='acceptor'?'acceptor':'insert' });
     saveUserParts();
     syncUserPartsIntoLists();
-    nameEl.value = ''; descEl.value = ''; lenEl.value = '';
+    nameEl.value = ''; descEl.value = ''; lenEl.value = ''; roleEl.value = 'insert';
+    document.getElementById('mp-seq').value = '';
+    document.getElementById('mp-seq-result').textContent = '';
     renderUserPartsList();
     renderDbFilters();
     renderDbTable();

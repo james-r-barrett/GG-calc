@@ -177,16 +177,27 @@
         <div class="my-parts-heading">
           <h2>My saved parts <span class="count" id="user-parts-count"></span></h2>
           <div class="my-parts-io">
-            <button type="button" id="mp-download-btn" class="icon-btn">Download</button>
-            <button type="button" id="mp-upload-btn" class="icon-btn">Upload</button>
-            <input type="file" id="mp-upload-input" accept="application/json,.json" hidden>
+            <button type="button" id="mp-download-btn" class="icon-btn">Download backup</button>
+            <button type="button" id="mp-restore-btn" class="icon-btn">Restore backup</button>
+            <input type="file" id="mp-restore-input" accept="application/json,.json" hidden>
+            <button type="button" id="mp-csv-btn" class="icon-btn">Add parts from CSV</button>
+            <input type="file" id="mp-csv-input" accept="text/csv,.csv" hidden>
           </div>
         </div>
-        <p class="note">Remember a fragment by name and length when you don't have (or don't need) the full sequence &mdash; handy for backbones and parts the lab reuses often. Saved parts appear here and in the search below, and are stored only in this browser &mdash; use Download/Upload to back them up or move them to another browser.</p>
+        <p class="note">Remember a fragment by name and length when you don't have (or don't need) the full sequence &mdash; handy for backbones and parts the lab reuses often. Saved parts appear here and in the search below. Add parts from CSV to bulk-import a spreadsheet (columns: name, description, length in bp, and an optional 4th column &mdash; "acceptor" or "insert", defaults to insert).</p>
+        <p class="warning">These parts are cached in this browser only &mdash; they are <strong>not</strong> stored on a server or synced anywhere. Clearing your browser data will delete them. Use Download backup regularly and keep the file somewhere safe; you are responsible for your own backups.</p>
+        <div class="my-parts-seqcalc">
+          <input type="text" id="mp-seq" placeholder="Paste a sequence here to auto-calculate its length&hellip;">
+          <span class="note" id="mp-seq-result"></span>
+        </div>
         <div class="my-parts-form">
           <input type="text" id="mp-name" placeholder="Part name">
           <input type="text" id="mp-desc" placeholder="Description (optional)">
           <input type="number" id="mp-len" min="1" step="1" placeholder="Length (bp)">
+          <select id="mp-role" title="Where this part can be used from the library">
+            <option value="insert">Use as: Insert</option>
+            <option value="acceptor">Use as: Acceptor vector</option>
+          </select>
           <button type="button" id="mp-add-btn" class="btn-add">+ Add part</button>
         </div>
         <div id="my-parts-list"></div>

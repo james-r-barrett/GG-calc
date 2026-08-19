@@ -394,11 +394,23 @@
   .my-parts-card{ margin-bottom:20px; }
   .my-parts-heading{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .my-parts-heading h2{ margin-bottom:0; }
-  .my-parts-io{ display:flex; gap:8px; }
+  .my-parts-io{ display:flex; gap:8px; flex-wrap:wrap; }
   .my-parts-form{ display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
   .my-parts-form input{ flex:1 1 160px; min-width:120px; }
   .my-parts-form input#mp-len{ flex:0 1 120px; }
+  .my-parts-form select{
+    flex:0 1 170px; font-family:var(--font-ui); font-size:13px; color:var(--ink);
+    background:#FCFBF8; border:1px solid var(--line-strong); border-radius:6px; padding:9px 10px;
+  }
   .my-parts-form .btn-add{ flex:0 0 auto; width:auto; margin-top:0; padding:9px 16px; }
+  .role-select{
+    font-family:var(--font-ui); font-size:12px; color:var(--ink);
+    background:#FCFBF8; border:1px solid var(--line-strong); border-radius:6px; padding:5px 6px;
+  }
+  .my-parts-seqcalc{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:8px; }
+  .my-parts-seqcalc input{ flex:1 1 260px; min-width:160px; font-family:var(--font-mono); font-size:12.5px; }
+  .my-parts-seqcalc .icon-btn{ flex:0 0 auto; }
+  .my-parts-seqcalc .note{ flex:0 0 auto; margin:0; }
   .my-parts-table{ margin-top:14px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
   .my-parts-table th{
     text-align:left; font-family:var(--font-mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
