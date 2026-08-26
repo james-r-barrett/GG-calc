@@ -459,7 +459,7 @@ function init() {
       const inputVal = row.part ? row.part.raw.n : '';
       html += `<div class="combo-wrap">
         <div class="combo-input-row">
-          <input type="text" class="combo-input" placeholder="Search parts by name&hellip;" value="${escapeHtml(inputVal)}" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-label="Search parts by name">
+          <input type="text" class="combo-input" placeholder="Search parts by name or type&hellip;" value="${escapeHtml(inputVal)}" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-label="Search parts by name or type">
           <input type="text" inputmode="decimal" class="conc-input" data-field="conc" placeholder="ng/&micro;L" value="${escapeHtml(row.conc)}" aria-label="Stock concentration in nanograms per microlitre">
         </div>
         <div class="combo-panel" role="listbox" hidden></div>
@@ -540,7 +540,11 @@ function init() {
 
     function renderPanel(){
       const q = input.value.trim().toLowerCase();
-      filtered = !q ? items.slice(0, 60) : items.filter(it => it.raw.n.toLowerCase().includes(q)).slice(0, 60);
+      filtered = !q ? items.slice(0, 60) : items.filter(it =>
+        it.raw.n.toLowerCase().includes(q) ||
+        (it.cat && it.cat.toLowerCase().includes(q)) ||
+        (it.raw.note && it.raw.note.toLowerCase().includes(q))
+      ).slice(0, 60);
       if (filtered.length === 0){
         panel.innerHTML = `<div class="combo-empty">No matches</div>`;
       } else {
