@@ -1480,7 +1480,7 @@ function init() {
 
   function renderDbTable(){
     const q = document.getElementById('db-search').value.trim().toLowerCase();
-    const rows = ALL_DB.filter(d => (dbActiveFilter==='All' || d.cat===dbActiveFilter) && (!q || d.name.toLowerCase().includes(q)));
+    const rows = ALL_DB.filter(d => (dbActiveFilter==='All' || d.cat===dbActiveFilter) && (!q || d.name.toLowerCase().includes(q) || (d.details && d.details.toLowerCase().includes(q))));
     const tbody = document.getElementById('db-tbody');
     tbody.innerHTML = rows.map((d, i) => `
       <tr>
