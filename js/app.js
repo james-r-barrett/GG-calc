@@ -44,10 +44,28 @@ function init() {
     'Acceptor Vector': '#14213D',
     'Custom': '#8A8F98',
     'My Parts': '#2B6CA3',
+    // Chloroplast (CHLOROMODAS) kit -- categories with no nuclear-kit equivalent
+    "5' Homology": '#3E7CB1',
+    "3' Homology": '#3E7CB1',
+    "5' Connector": '#6B8E4E',
+    "3' Connector": '#6B8E4E',
+    "Operon Connector (5')": '#8FA85E',
+    "Operon Connector (3')": '#8FA85E',
+    'IEE': '#B0793E',
+    'N-tag': '#9B6EC4',
+    'C-tag': '#9B6EC4',
+    'Selection Marker': '#C08A2E',
+    'E. coli ORI + Resistance': '#7C5C3E',
+    'Placeholder': '#9CA3AF',
+    'CDS': '#B85C38',
   };
   function catColor(cat){ return CAT_COLORS[cat] || '#8A8F98'; }
   function catDot(cat){ return `<span class="cat-dot" style="background:${catColor(cat)}"></span>`; }
   function catPill(cat){ return `<span class="cat-pill">${catDot(cat)}${escapeHtml(cat||'Custom')}</span>`; }
+
+  /* ============ Kit labels (Part Library kit toggle) ============ */
+  const KIT_LABELS = { nuclear: 'Nuclear kit', chloroplast: 'Chloroplast kit' };
+  function kitLabel(kit){ return KIT_LABELS[kit] || 'Other'; }
 
   function escapeHtml(str){
     return String(str==null?'':str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1422,16 +1440,17 @@ function init() {
   /* ============ Part Library tab ============ */
   const ALL_DB = [];
   ACCEPT.forEach(a => ALL_DB.push({
-    kind:'acceptor', raw:a, name:a.n, cat:'Acceptor Vector', len:partLen(a),
+    kind:'acceptor', raw:a, name:a.n, cat:'Acceptor Vector', len:partLen(a), kit:a.kit||'nuclear',
     details: [a.desc, a.enz, a.lvl!=null&&a.lvl!=='' ? 'Level '+a.lvl : null, a.pos&&a.pos!=='-' ? 'Position '+a.pos : null,
-      (a.s5||a.s3) ? `5′ ${a.s5||''} · 3′ ${a.s3||''}` : null, a.mark].filter(Boolean).join(' · ')
+      (a.s5||a.s3) ? `5′ ${a.s5||''} · 3′ ${a.s3||''}` : null, a.mark, a.well?('Well '+a.well):null].filter(Boolean).join(' · ')
   }));
   PARTS.forEach(p => ALL_DB.push({
-    kind:'part', raw:p, name:p.n, cat:(p.t||'').trim(), len:partLen(p),
-    details: `5′ ${p.s5||''}  ·  3′ ${p.s3||''}`
+    kind:'part', raw:p, name:p.n, cat:(p.t||'').trim(), len:partLen(p), kit:p.kit||'nuclear',
+    details: [(p.s5||p.s3) ? `5′ ${p.s5||''} · 3′ ${p.s3||''}` : null, p.pos?('Position '+p.pos):null, p.well?('Well '+p.well):null]
+      .filter(Boolean).join(' · ')
   }));
   LINKERS.forEach(l => ALL_DB.push({
-    kind:'linker', raw:l, name:l.n, cat:(l.t||'').trim(), len:partLen(l),
+    kind:'linker', raw:l, name:l.n, cat:(l.t||'').trim(), len:partLen(l), kit:l.kit||'nuclear',
     details: [l.pos?('Positions '+l.pos):null, l.lvl!=null?('Level '+l.lvl):null].filter(Boolean).join(' · ')
   }));
 
@@ -1445,15 +1464,43 @@ function init() {
       const raw = { id: up.id, n: up.n, note: up.note, len: up.len, role: up.role === 'acceptor' ? 'acceptor' : 'insert' };
       INSERTABLE.push({ kind:'user', raw, cat:'My Parts' });
       ACCEPTABLE.push({ kind:'user', raw, cat:'My Parts' });
-      ALL_DB.push({ kind:'user', raw, name: up.n, cat:'My Parts', len: up.len, details: up.note || '' });
+      ALL_DB.push({ kind:'user', raw, name: up.n, cat:'My Parts', len: up.len, kit:'user', details: up.note || '' });
     });
   }
 
   let dbActiveFilter = 'All';
+  let dbActiveKit = 'All';
+
+  // Items always shown regardless of the kit toggle (the user's own saved parts
+  // aren't part of either built-in kit) live under kit:'user'.
+  function matchesKit(d){ return dbActiveKit==='All' || d.kit===dbActiveKit || d.kind==='user'; }
+
+  function renderDbKitFilters(){
+    const wrap = document.getElementById('db-kit-filters');
+    if (!wrap) return;
+    const kits = Array.from(new Set(ALL_DB.filter(d => d.kind!=='user').map(d => d.kit || 'other')));
+    const order = ['nuclear', 'chloroplast'];
+    kits.sort((a,b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      return (ia===-1?99:ia) - (ib===-1?99:ib);
+    });
+    const chips = ['All', ...kits];
+    wrap.innerHTML = chips.map(k => `<button type="button" class="filter-chip kit-chip${k===dbActiveKit?' active':''}" data-kit="${escapeHtml(k)}">${k==='All'?'All kits':escapeHtml(kitLabel(k))}</button>`).join('');
+    wrap.querySelectorAll('.filter-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        dbActiveKit = chip.dataset.kit;
+        dbActiveFilter = 'All';
+        renderDbKitFilters();
+        renderDbFilters();
+        renderDbTable();
+      });
+    });
+  }
 
   function renderDbFilters(){
     const wrap = document.getElementById('db-filters');
-    const cats = ['All', ...Array.from(new Set(ALL_DB.map(d => d.cat))).sort()];
+    const cats = ['All', ...Array.from(new Set(ALL_DB.filter(matchesKit).map(d => d.cat))).sort()];
+    if (!cats.includes(dbActiveFilter)) dbActiveFilter = 'All';
     wrap.innerHTML = cats.map(c => `<button type="button" class="filter-chip${c===dbActiveFilter?' active':''}" data-cat="${escapeHtml(c)}">${c==='All'?'':catDot(c)}${escapeHtml(c)}</button>`).join('');
     wrap.querySelectorAll('.filter-chip').forEach(chip => {
       chip.addEventListener('click', () => { dbActiveFilter = chip.dataset.cat; renderDbTable(); });
@@ -1481,7 +1528,7 @@ function init() {
 
   function renderDbTable(){
     const q = document.getElementById('db-search').value.trim().toLowerCase();
-    const rows = ALL_DB.filter(d => (dbActiveFilter==='All' || d.cat===dbActiveFilter) && (!q || d.name.toLowerCase().includes(q) || (d.details && d.details.toLowerCase().includes(q))));
+    const rows = ALL_DB.filter(d => matchesKit(d) && (dbActiveFilter==='All' || d.cat===dbActiveFilter) && (!q || d.name.toLowerCase().includes(q) || (d.details && d.details.toLowerCase().includes(q))));
     const tbody = document.getElementById('db-tbody');
     tbody.innerHTML = rows.map((d, i) => `
       <tr>
@@ -1736,6 +1783,7 @@ function init() {
   });
   syncUserPartsIntoLists();
   renderUserPartsList();
+  renderDbKitFilters();
   renderDbFilters();
   renderMasterMixSettings();
   renderCyclingTable();

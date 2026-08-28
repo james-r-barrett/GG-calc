@@ -423,11 +423,13 @@
   .db-controls{ display:flex; flex-wrap:wrap; gap:10px 14px; align-items:center; margin-bottom:16px; }
   #db-search{ max-width:320px; }
   .db-filters{ display:flex; flex-wrap:wrap; gap:6px; }
+  .db-kit-filters{ display:flex; flex-wrap:wrap; gap:6px; width:100%; order:-1; }
   .filter-chip{
     font-family:var(--font-mono); font-size:11px; padding:5px 10px; border-radius:20px; cursor:pointer;
     border:1px solid var(--line-strong); background:#fff; color:var(--ink-soft); display:inline-flex; align-items:center; gap:6px;
   }
   .filter-chip.active{ background:var(--ink); color:#fff; border-color:var(--ink); }
+  .kit-chip{ font-weight:600; text-transform:uppercase; letter-spacing:.04em; font-size:10.5px; }
 
   .db-table-wrap{ background:var(--card-bg); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; }
   .db-table{ width:100%; border-collapse:collapse; font-size:13px; }

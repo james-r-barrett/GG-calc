@@ -55,7 +55,12 @@ Pipetting volumes for all assemblies can be downloaded as a CSV file.
 
 ## Part library
 
-The "Part Library" tab lists all built-in acceptor vectors, level-0 parts, and linkers, with search-by-name and category filters. Alongside the built-in library, you can maintain your own list of saved parts:
+The "Part Library" tab lists all built-in acceptor vectors, level-0 parts, and linkers, with search-by-name and category filters. The built-in library currently covers two kits, switchable with a kit toggle above the category filters (an "Other" bucket appears automatically if a future kit doesn't fit either):
+
+- **Nuclear kit** — the Chlamydomonas MoClo Kit (Crozet et al.), for nuclear engineering.
+- **Chloroplast kit** — the CHLOROMODAS chloroplast MoClo kit (Inckemann, Chotel, Burgis et al., *Nat. Plants* 2025; [ChlamyMarburg/ChloroplastTools](https://github.com/ChlamyMarburg/ChloroplastTools)). Category names follow that kit's own naming/position convention (5'/3' Homology, 5'/3' Connector, Operon Connectors, IEE, N-/C-tag, etc.), and part entries carry the 96-well plate position where available.
+
+Alongside the built-in library, you can maintain your own list of saved parts (shown regardless of the kit toggle):
 
 - **Add manually** — record a part by name, optional description, and length in bp, without needing the full sequence. Useful for backbones and fragments the lab reuses often. A helper field will calculate the length of a pasted sequence for you.
 - **Add from CSV** — bulk-import a spreadsheet with columns: name, description, length in bp, and an optional fourth column ("acceptor" or "insert", defaulting to insert).
@@ -75,6 +80,8 @@ The built-in libraries live in `data/` as JSON:
 | `data/linkers.json` | End linkers and dummy fragments used to fill unused positions in an assembly, with the level and position(s) they occupy. |
 
 Any entry in these files may omit its sequence (`s`) and give a length in bp (`len`) instead — such entries remain fully selectable and usable in volume calculations under length-only mode, but no sequence is fetched, displayed, or exposed for them.
+
+Every entry also carries a `kit` field (`"nuclear"` or `"chloroplast"`) that drives the Part Library kit toggle. Chloroplast entries additionally carry `pos` (the kit's own MoClo position code, e.g. `"3b"` for an N-tag) and, where a confident match to the kit's plate map was possible, `well` (the 96-well plate position).
 
 ## Project structure
 
