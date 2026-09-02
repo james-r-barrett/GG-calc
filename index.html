@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Golden Gate Assembly Calculator</title>
+<script>
+(function(){
+  try {
+    var stored = localStorage.getItem('gg-calc-theme');
+    if (stored === 'light' || stored === 'dark') document.documentElement.setAttribute('data-theme', stored);
+  } catch(e){}
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -29,7 +37,18 @@
         <button class="tab-btn active" data-tab="calc" role="tab" aria-selected="true">Calculator</button>
         <button class="tab-btn" data-tab="db" role="tab" aria-selected="false">Part Library</button>
       </nav>
-      <button id="clear-page-btn" class="clear-btn" type="button">Clear page</button>
+      <div class="header-actions-row">
+        <button id="theme-toggle-btn" class="theme-toggle-btn" type="button" title="Toggle dark mode" aria-label="Switch to dark mode">
+          <svg class="icon-sun" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+            <circle cx="10" cy="10" r="3.6"/>
+            <path d="M10 1.5v2M10 16.5v2M3.5 3.5l1.4 1.4M15.1 15.1l1.4 1.4M1.5 10h2M16.5 10h2M3.5 16.5l1.4-1.4M15.1 4.9l1.4-1.4"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 11.2A7 7 0 0 1 8.8 3 7.4 7.4 0 1 0 17 11.2Z"/>
+          </svg>
+        </button>
+        <button id="clear-page-btn" class="clear-btn" type="button">Clear page</button>
+      </div>
     </div>
   </header>
 
@@ -228,5 +247,34 @@
 </div>
 
 <script src="js/app.js"></script>
+<script>
+(function(){
+  var STORAGE_KEY = 'gg-calc-theme';
+  var root = document.documentElement;
+  var btn = document.getElementById('theme-toggle-btn');
+  var mql = window.matchMedia('(prefers-color-scheme: dark)');
+
+  function effectiveTheme(){
+    var stored = root.getAttribute('data-theme');
+    if (stored === 'light' || stored === 'dark') return stored;
+    return mql.matches ? 'dark' : 'light';
+  }
+  function updateIcon(){
+    var isDark = effectiveTheme() === 'dark';
+    var label = isDark ? 'Switch to light mode' : 'Switch to dark mode';
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+    btn.classList.toggle('is-dark', isDark);
+  }
+  btn.addEventListener('click', function(){
+    var next = effectiveTheme() === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem(STORAGE_KEY, next); } catch(e){}
+    updateIcon();
+  });
+  if (mql.addEventListener) mql.addEventListener('change', function(){ if (!root.hasAttribute('data-theme')) updateIcon(); });
+  updateIcon();
+})();
+</script>
 </body>
 </html>
