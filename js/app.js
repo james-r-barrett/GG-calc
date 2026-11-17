@@ -81,22 +81,28 @@ function init() {
     }
     return {a,c,g,t};
   }
+  // Double-stranded MW: each base on the given strand is paired with its complement on the other
+  // strand, so count both. Anhydrous nucleotide weights (dA 313.21, dC 289.18, dG 329.21, dT 304.20)
+  // plus 36.04 for the two strand ends -- the same basis as the 617.96/bp length formula below.
+  // (Previously this summed one strand only, using free-nucleotide weights, which roughly halved
+  // the MW and therefore every calculated volume.)
   function molWeight(seq){
     const {a,c,g,t} = baseCounts(seq);
-    return a*331.2 + c*307.2 + g*347.2 + t*322.2;
+    const AT = 313.21 + 304.20, GC = 329.21 + 289.18;
+    return (a+t)*AT + (g+c)*GC + 36.04;
   }
   // targetFmol * MW(g/mol) * 1e-15(fmol->mol) / (conc(ng/uL) * 1e-9(ng->g)) = volume in uL
   function volReqUl(targetFmol, seq, concNgUl){
     if (!seq || !concNgUl || concNgUl<=0 || targetFmol==null) return null;
     return (targetFmol * molWeight(seq) * 1e-6) / concNgUl;
   }
-  // Length-only method: average dsDNA MW per bp (617.96/bp + 36.04), halved as in the workbook's "Vol Req - Length" column.
+  // Length-only method: average dsDNA MW per bp (617.96/bp + 36.04).
   function molWeightFromLength(lenBp){
     return lenBp*617.96 + 36.04;
   }
   function volReqLengthUl(targetFmol, lenBp, concNgUl){
     if (lenBp==null || !concNgUl || concNgUl<=0 || targetFmol==null) return null;
-    return (targetFmol * molWeightFromLength(lenBp) * 1e-6) / (2*concNgUl);
+    return (targetFmol * molWeightFromLength(lenBp) * 1e-6) / concNgUl;
   }
   function cleanSeq(raw){
     return (raw||'').toUpperCase().replace(/[^ACGT]/g, '');
